@@ -104,6 +104,7 @@ function endSnooker(state) {
   const { geo } = state
   const me = state.turn
   const op = 1 - me
+  state.breakShot = false
   const redsLeft =
     redsOnTable(state) + state.potted.filter((n) => n <= 15).length > 0
   const nextColor = 16 + state.sn.idx

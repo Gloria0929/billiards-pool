@@ -3,6 +3,7 @@ import { BilliardsEngine } from '../game/engine.js'
 import { createMatch, hydrateState, snapshot } from '../game/match.js'
 import { endShot } from '../game/rules.js'
 import { MODES } from '../game/constants.js'
+import { chooseAiShot } from '../game/ai.js'
 import * as audio from '../game/audio.js'
 import { NetClient } from '../net/client.js'
 
@@ -19,6 +20,7 @@ export function useBilliards() {
   let aimTimer = null
   let lastAimPayload = ''
   let lastAimTurn = null
+  let aiTimer = null
 
   const ui = reactive({
     ready: false,
@@ -124,6 +126,7 @@ export function useBilliards() {
   onBeforeUnmount(() => {
     if (aimTimer) clearInterval(aimTimer)
     aimTimer = null
+    clearAiTimer()
     document.removeEventListener('keydown', onEscape)
     if (ui.online.status !== 'idle') {
       net?.send({ type: 'leave' })
@@ -151,13 +154,18 @@ export function useBilliards() {
     ui.modeLabel =
       ui.online.status === 'room' || onlinePlaying
         ? `${snap.modeName} · 房间 ${ui.online.code}`
-        : `${snap.modeName} · 本地双人`
+        : `${snap.modeName} · 人机对战`
     const myTurn = !onlinePlaying || ui.online.seat === state.turn
+    const aiTurn =
+      ui.online.status === 'idle' &&
+      state.phase === 'aim' &&
+      state.turn === 1
     ui.canShoot =
       state.phase === 'aim' &&
       !ui.menu.visible &&
       myTurn &&
-      !ui.online.waiting
+      !ui.online.waiting &&
+      !aiTurn
     engine?.setInteraction(ui.canShoot)
   }
 
@@ -192,19 +200,22 @@ export function useBilliards() {
   }
 
   function startLocal() {
+    clearAiTimer()
     if (ui.online.status !== 'idle') leaveRoom(true)
     audio.ensureAudio()
-    state = createMatch(ui.selectedMode)
+    const seed = (Math.random() * 2 ** 32) >>> 0
+    state = createMatch(ui.selectedMode, seed, ['你', '电脑'])
     engine.loadMatch(state)
     audio.restoreMaster()
     closeMenu()
     syncUi()
-    engine.setInteraction(true)
+    maybeScheduleAi()
   }
 
   function openMenu() {
     if (ui.online.status === 'playing') return
     if (!state) return
+    clearAiTimer()
     audio.silence()
     showMenu(
       'paused',
@@ -217,6 +228,44 @@ export function useBilliards() {
     if (ui.menu.kind !== 'paused' && ui.menu.kind !== 'online-menu') return
     closeMenu()
     audio.restoreMaster()
+    maybeScheduleAi()
+  }
+
+  function clearAiTimer() {
+    if (aiTimer) clearTimeout(aiTimer)
+    aiTimer = null
+  }
+
+  function aiTurnReady() {
+    return (
+      ui.online.status === 'idle' &&
+      !!state &&
+      state.phase === 'aim' &&
+      state.turn === 1 &&
+      !ui.menu.visible &&
+      !!engine
+    )
+  }
+
+  function maybeScheduleAi() {
+    clearAiTimer()
+    if (!aiTurnReady()) return
+    aiTimer = setTimeout(runAiTurn, 900)
+  }
+
+  function runAiTurn() {
+    aiTimer = null
+    if (!aiTurnReady()) return
+    const shot = chooseAiShot(state, 1)
+    engine.angle = shot.angle
+    engine.setPower(shot.power)
+    engine.setSpin({ x: 0, y: 0 })
+    aiTimer = setTimeout(() => {
+      aiTimer = null
+      if (!aiTurnReady()) return
+      engine.playShot(shot)
+      syncUi()
+    }, 750)
   }
 
   /* ---------- 音效 / 辅助线 ---------- */
@@ -293,7 +342,11 @@ export function useBilliards() {
     }
     endShot(state)
     syncUi()
-    if (state.phase === 'over') openOverlayForResult()
+    if (state.phase === 'over') {
+      openOverlayForResult()
+      return
+    }
+    maybeScheduleAi()
   }
 
   function applyServerState(next) {
@@ -378,6 +431,7 @@ export function useBilliards() {
   }
 
   function leaveRoom(silent = false) {
+    clearAiTimer()
     if (!silent) net?.send({ type: 'leave' })
     net?.close()
     ui.online.status = 'idle'

@@ -30,6 +30,11 @@ const watching = computed(
 )
 
 const turnNote = computed(() => {
+  if (props.ui.online.status === 'idle') {
+    if (props.ui.turn === 1 && props.ui.phase === 'aim' && props.ui.names)
+      return '电脑正在瞄准…'
+    return ''
+  }
   if (props.ui.online.status !== 'playing') return ''
   if (props.ui.online.opponentLeft) return '对手已离开'
   if (props.ui.online.waiting) return '正在同步击球…'

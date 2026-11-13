@@ -57,7 +57,7 @@ const rematchText = computed(() => {
             :aria-pressed="tab === 'local'"
             @click="tab = 'local'"
           >
-            本地双人
+            人机对战
           </button>
           <button
             role="tab"
@@ -120,7 +120,7 @@ const rematchText = computed(() => {
           <div class="mode-footer">
             <p>
               <span id="mode-summary">{{ summary }}</span
-              ><br />本地双人轮流击球 · 支持鼠标与触屏
+              ><br />你与电脑轮流击球 · 支持鼠标与触屏
             </p>
             <button id="start" @click="actions.startLocal">
               {{ startLabel }}

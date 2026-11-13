@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { COL, DT, MAX_SIM_STEPS, RAIL, SC, clamp } from './constants.js'
 import { getGeometry, toWorldX, toWorldZ } from './geometry.js'
-import { aimRay, moving, step } from './physics.js'
+import { moving, step } from './physics.js'
+import { buildAimGuide } from './guide.js'
 import { launchShot } from './match.js'
 import * as audio from './audio.js'
 
@@ -157,6 +158,48 @@ export class BilliardsEngine {
       }),
     )
     this.aimGroup.add(this.ghost)
+
+    const dashedLine = (color) => {
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(),
+          new THREE.Vector3(),
+        ]),
+        new THREE.LineDashedMaterial({
+          color,
+          dashSize: 22,
+          gapSize: 14,
+          transparent: true,
+          opacity: 0.9,
+        }),
+      )
+      line.visible = false
+      this.aimGroup.add(line)
+      return line
+    }
+    this.bankCueLine = dashedLine(0x8fd6ff)
+    this.bankObjectLine = dashedLine(0xffd479)
+
+    const pocketRing = new THREE.RingGeometry(0.72, 1, 36)
+    const pocketMark = (color) => {
+      const mark = new THREE.Mesh(
+        pocketRing,
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.85,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      )
+      mark.rotation.x = -Math.PI / 2
+      mark.visible = false
+      this.aimGroup.add(mark)
+      return mark
+    }
+    this.cuePocketMark = pocketMark(0x8fd6ff)
+    this.objectPocketMark = pocketMark(0xffd479)
+
     this.scene.add(this.aimGroup)
 
     this.cueGroup = new THREE.Group()
@@ -767,25 +810,30 @@ export class BilliardsEngine {
       const dy = Math.sin(this.angle)
       const P = (x, y) => V3(tx(x), R, tz(y))
       if (state.phase === 'aim') {
-        const ray = aimRay(geo, state.balls, this.angle)
-        const gx = cue.x + dx * ray.t
-        const gy = cue.y + dy * ray.t
+        const guide = buildAimGuide(geo, state.balls, this.angle)
+        const gx = guide.ghost.x
+        const gy = guide.ghost.y
         const g = P(gx, gy)
         this.segment(this.lineA, P(cue.x, cue.y), g)
         this.ghost.position.copy(g)
         this.ghost.scale.setScalar(R)
-        if (ray.hit) {
-          const h = ray.hit
-          const nx = (h.x - gx) / (2 * R)
-          const ny = (h.y - gy) / (2 * R)
-          const dot = dx * nx + dy * ny
-          this.segment(this.lineB, P(h.x, h.y), P(h.x + nx * 420, h.y + ny * 420))
+        if (guide.hitBall && guide.object && guide.deflect) {
+          const h = guide.hitBall
+          this.segment(
+            this.lineB,
+            P(h.x, h.y),
+            P(guide.object.to.x, guide.object.to.y),
+          )
           this.segment(
             this.lineC,
             g,
-            P(gx + (dx - dot * nx) * 220, gy + (dy - dot * ny) * 220),
+            P(gx + guide.deflect.x * 220, gy + guide.deflect.y * 220),
           )
         } else this.lineB.visible = this.lineC.visible = false
+        this.setGuideLine(this.bankCueLine, guide.cueBank)
+        this.setGuideLine(this.bankObjectLine, guide.objectBank)
+        this.setPocketMark(this.cuePocketMark, guide.cueBank)
+        this.setPocketMark(this.objectPocketMark, guide.objectBank)
       }
       const strike = this.strikeProgress
       const gap = R + 3 + (11 + this.power * 260) * (1 - strike * strike)
@@ -807,6 +855,40 @@ export class BilliardsEngine {
     mesh.position.copy(a).add(b).multiplyScalar(0.5)
     mesh.scale.set(1, length || 1, 1)
     if (length > 1) mesh.quaternion.setFromUnitVectors(Y_AXIS, d.normalize())
+  }
+
+  setGuideLine(line, bank) {
+    if (!bank) {
+      line.visible = false
+      return
+    }
+    const y = this.geo.R + 0.6
+    line.geometry.setFromPoints([
+      V3(
+        toWorldX(this.geo, bank.from.x),
+        y,
+        toWorldZ(this.geo, bank.from.y),
+      ),
+      V3(toWorldX(this.geo, bank.to.x), y, toWorldZ(this.geo, bank.to.y)),
+    ])
+    line.computeLineDistances()
+    line.visible = true
+  }
+
+  setPocketMark(mark, bank) {
+    if (!bank || !bank.pocket) {
+      mark.visible = false
+      return
+    }
+    const pocket = bank.pocket
+    mark.position.set(
+      toWorldX(this.geo, pocket.x),
+      1.2,
+      toWorldZ(this.geo, pocket.y),
+    )
+    const scale = pocket.r * 0.85
+    mark.scale.set(scale, scale, scale)
+    mark.visible = true
   }
 
   spinBall(ball, elapsed) {

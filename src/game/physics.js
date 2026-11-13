@@ -227,31 +227,70 @@ export function moving(balls) {
   return balls.some((b) => b.on && (b.vx || b.vy || b.wx || b.wy))
 }
 
-export function aimRay(geo, balls, angle) {
+export function castRay(geo, balls, sx, sy, dx, dy, ignoreN = null) {
   const { W, H, R } = geo
-  const c = balls[0]
-  const dx = Math.cos(angle)
-  const dy = Math.sin(angle)
   let t = 1e9
-  let hit = null
+  let ball = null
   for (const b of balls) {
-    if (b.n === 0 || !b.on) continue
-    const fx = b.x - c.x
-    const fy = b.y - c.y
+    if (!b.on || b.n === ignoreN) continue
+    const fx = b.x - sx
+    const fy = b.y - sy
     const p = fx * dx + fy * dy
     if (p <= 0) continue
     const d2 = fx * fx + fy * fy - p * p
     if (d2 > 4 * R * R) continue
     const tt = p - Math.sqrt(4 * R * R - d2)
-    if (tt < t) {
+    if (tt >= 0 && tt < t) {
       t = tt
-      hit = b
+      ball = b
     }
   }
   let tw = 1e9
-  if (dx > 0) tw = Math.min(tw, (W - R - c.x) / dx)
-  if (dx < 0) tw = Math.min(tw, (R - c.x) / dx)
-  if (dy > 0) tw = Math.min(tw, (H - R - c.y) / dy)
-  if (dy < 0) tw = Math.min(tw, (R - c.y) / dy)
-  return hit && t < tw ? { t, hit } : { t: tw, hit: null }
+  let wall = null
+  if (dx > 1e-9) {
+    const d = (W - R - sx) / dx
+    if (d < tw) {
+      tw = d
+      wall = 'right'
+    }
+  }
+  if (dx < -1e-9) {
+    const d = (R - sx) / dx
+    if (d < tw) {
+      tw = d
+      wall = 'left'
+    }
+  }
+  if (dy > 1e-9) {
+    const d = (H - R - sy) / dy
+    if (d < tw) {
+      tw = d
+      wall = 'bottom'
+    }
+  }
+  if (dy < -1e-9) {
+    const d = (R - sy) / dy
+    if (d < tw) {
+      tw = d
+      wall = 'top'
+    }
+  }
+  tw = Math.max(0, tw)
+  if (ball && t < tw)
+    return { t, x: sx + dx * t, y: sy + dy * t, ball, wall: null }
+  return { t: tw, x: sx + dx * tw, y: sy + dy * tw, ball: null, wall }
+}
+
+export function aimRay(geo, balls, angle) {
+  const cue = balls[0]
+  const hit = castRay(
+    geo,
+    balls,
+    cue.x,
+    cue.y,
+    Math.cos(angle),
+    Math.sin(angle),
+    0,
+  )
+  return { t: hit.t, hit: hit.ball, wall: hit.wall, x: hit.x, y: hit.y }
 }

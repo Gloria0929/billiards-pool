@@ -37,8 +37,10 @@ function displayName(seat) {
 }
 
 function tagFor(seat) {
-  if (!onlineActive.value) return ''
-  return seat === props.ui.online.seat ? '你' : '对手'
+  if (onlineActive.value)
+    return seat === props.ui.online.seat ? '你' : '对手'
+  if (seat === 1 && props.ui.names) return 'AI'
+  return ''
 }
 
 function toggleOnline() {

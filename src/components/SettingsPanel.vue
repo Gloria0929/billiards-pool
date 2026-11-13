@@ -45,7 +45,7 @@ onBeforeUnmount(() => {
       <div class="setting-text">
         <b>辅助线</b>
         <small>{{
-          guideLocked ? '本局由房主设置' : '瞄准时显示预测线与反弹线'
+          guideLocked ? '本局由房主设置' : '显示预测线、翻袋线与进袋提示'
         }}</small>
       </div>
       <button
