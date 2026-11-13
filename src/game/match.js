@@ -41,6 +41,10 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
   const geo = getGeometry(mode)
   const rng = mulberry32(seed >>> 0)
   const { W, H, R } = geo
+  // 摆球随机偏移：三角架每颗球加约 0.02 个球直径的随机偏移（用 seed 随机数，
+  // 同 seed 仍可复现，联网对局两边一致）。偏移肉眼不可见，但碰撞链会放大它，
+  // 使每局开球后球形各不相同；不改出杆参数，不影响玩家瞄准。
+  const jit = () => (rng() - 0.5) * R * 0.04
   let balls
 
   if (mode === 'pool') {
@@ -66,8 +70,8 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
         balls.push(
           makeBall(
             slots[idx++],
-            head + row * dx,
-            H / 2 + (col - row / 2) * 2 * R * 1.002,
+            head + row * dx + jit(),
+            H / 2 + (col - row / 2) * 2 * R * 1.002 + jit(),
           ),
         )
   } else {
@@ -79,7 +83,11 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
     for (let row = 0; row < 5; row++)
       for (let col = 0; col <= row; col++)
         balls.push(
-          makeBall(n++, head + row * dx, H / 2 + (col - row / 2) * 2 * R * 1.002),
+          makeBall(
+            n++,
+            head + row * dx + jit(),
+            H / 2 + (col - row / 2) * 2 * R * 1.002 + jit(),
+          ),
         )
   }
 
