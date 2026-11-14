@@ -3,6 +3,15 @@ import { castRay } from './physics.js'
 
 const SOLIDS = 'solid'
 
+// 人机对战 AI 难度：angle/power/safety 是误差的满幅（实际误差为 ±一半），
+// randomPick 是不挑最近可进球、改从全部可进球里随机挑的概率。
+// normal 与改动前的固定水平完全一致。
+export const AI_DIFFICULTY = {
+  easy: { angle: 0.032, power: 0.2, safety: 0.08, randomPick: 0.3 },
+  normal: { angle: 0.008, power: 0.04, safety: 0.02, randomPick: 0 },
+  hard: { angle: 0.004, power: 0.02, safety: 0.01, randomPick: 0 },
+}
+
 function groupOf(n) {
   return n < 8 ? SOLIDS : 'stripe'
 }
@@ -88,7 +97,8 @@ function potCandidates(state, target) {
   return candidates
 }
 
-export function chooseAiShot(state, seat = 1) {
+export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
+  const d = AI_DIFFICULTY[difficulty] || AI_DIFFICULTY.normal
   const geo = state.geo || getGeometry(state.mode)
   const cue = state.balls[0]
   const cueRef = { x: cue.x, y: cue.y }
@@ -112,17 +122,24 @@ export function chooseAiShot(state, seat = 1) {
   }
 
   const targets = legalTargets(state, seat)
-  let best = null
+  const candidates = []
   for (const target of targets) {
     for (const candidate of potCandidates(state, target)) {
-      if (!best || candidate.distance < best.distance) best = candidate
+      candidates.push(candidate)
     }
   }
+  let best = null
+  for (const candidate of candidates) {
+    if (!best || candidate.distance < best.distance) best = candidate
+  }
+  if (best && d.randomPick > 0 && candidates.length > 1 && Math.random() < d.randomPick) {
+    best = candidates[Math.floor(Math.random() * candidates.length)]
+  }
   if (best) {
-    const angle = best.angle + (Math.random() - 0.5) * 0.008
+    const angle = best.angle + (Math.random() - 0.5) * d.angle
     const power = Math.max(
       0.25,
-      Math.min(0.95, best.power + (Math.random() - 0.5) * 0.04),
+      Math.min(0.95, best.power + (Math.random() - 0.5) * d.power),
     )
     return { angle, power, spin: { x: 0, y: 0 }, cue: cueRef }
   }
@@ -153,7 +170,7 @@ export function chooseAiShot(state, seat = 1) {
   }
   if (safety) {
     return {
-      angle: safety.angle + (Math.random() - 0.5) * 0.02,
+      angle: safety.angle + (Math.random() - 0.5) * d.safety,
       power: safety.power,
       spin: { x: 0, y: 0 },
       cue: cueRef,

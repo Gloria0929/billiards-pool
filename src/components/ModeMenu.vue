@@ -117,6 +117,32 @@ const rematchText = computed(() => {
               <span class="mode-meta">22 颗球 · 积分较量 · 精准控球</span>
             </button>
           </div>
+          <div class="difficulty-row" aria-label="电脑难度">
+            <span>电脑难度</span>
+            <div class="difficulty-options">
+              <button
+                id="diff-easy"
+                :aria-pressed="ui.aiDifficulty === 'easy'"
+                @click="actions.setAiDifficulty('easy')"
+              >
+                简单
+              </button>
+              <button
+                id="diff-normal"
+                :aria-pressed="ui.aiDifficulty === 'normal'"
+                @click="actions.setAiDifficulty('normal')"
+              >
+                普通
+              </button>
+              <button
+                id="diff-hard"
+                :aria-pressed="ui.aiDifficulty === 'hard'"
+                @click="actions.setAiDifficulty('hard')"
+              >
+                困难
+              </button>
+            </div>
+          </div>
           <div class="mode-footer">
             <p>
               <span id="mode-summary">{{ summary }}</span

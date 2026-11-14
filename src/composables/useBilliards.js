@@ -9,6 +9,8 @@ import { NetClient } from '../net/client.js'
 
 const STORAGE_NAME = 'billiards-name'
 const STORAGE_GUIDE = 'billiards-guide'
+const STORAGE_DIFFICULTY = 'billiards-difficulty'
+const AI_DIFFICULTIES = ['easy', 'normal', 'hard']
 
 export function useBilliards() {
   const canvasRef = ref(null)
@@ -41,6 +43,7 @@ export function useBilliards() {
     spin: { x: 0, y: 0 },
     view: 'orbit',
     showGuide: true,
+    aiDifficulty: 'normal',
     canShoot: false,
     modeLabel: '中式八球 · 本地双人',
     menu: {
@@ -72,6 +75,10 @@ export function useBilliards() {
     } catch (_) {}
     try {
       ui.showGuide = localStorage.getItem(STORAGE_GUIDE) !== 'off'
+    } catch (_) {}
+    try {
+      const saved = localStorage.getItem(STORAGE_DIFFICULTY)
+      if (AI_DIFFICULTIES.includes(saved)) ui.aiDifficulty = saved
     } catch (_) {}
     ui.online.guide = ui.showGuide
 
@@ -256,7 +263,7 @@ export function useBilliards() {
   function runAiTurn() {
     aiTimer = null
     if (!aiTurnReady()) return
-    const shot = chooseAiShot(state, 1)
+    const shot = chooseAiShot(state, 1, ui.aiDifficulty)
     engine.angle = shot.angle
     engine.setPower(shot.power)
     engine.setSpin({ x: 0, y: 0 })
@@ -291,6 +298,15 @@ export function useBilliards() {
   function setRoomGuide(value) {
     if (ui.online.status !== 'idle') return
     ui.online.guide = !!value
+  }
+
+  /* ---------- 人机对战 AI 难度（仅本地，不影响联网） ---------- */
+  function setAiDifficulty(value) {
+    if (!AI_DIFFICULTIES.includes(value)) return
+    ui.aiDifficulty = value
+    try {
+      localStorage.setItem(STORAGE_DIFFICULTY, value)
+    } catch (_) {}
   }
 
   function toggleSettings() {
@@ -618,6 +634,7 @@ export function useBilliards() {
     actions: {
       selectMode,
       startLocal,
+      setAiDifficulty,
       openMenu,
       resumeGame,
       toggleGuide,
