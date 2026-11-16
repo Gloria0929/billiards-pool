@@ -16,6 +16,7 @@ import { NetClient } from '../net/client.js'
 
 const STORAGE_NAME = 'billiards-name'
 const STORAGE_GUIDE = 'billiards-guide'
+const STORAGE_GUIDE_MODE = 'billiards-guide-mode'
 const STORAGE_DIFFICULTY = 'billiards-difficulty'
 const STORAGE_BESTOF = 'billiards-bestof'
 const AI_DIFFICULTIES = ['easy', 'normal', 'hard']
@@ -56,10 +57,13 @@ export function useBilliards() {
     message: '',
     winner: null,
     power: 0.45,
+    playerPower: 0.45,
     charging: false,
     spin: { x: 0, y: 0 },
+    playerSpin: { x: 0, y: 0 },
     view: 'orbit',
     showGuide: true,
+    guideMode: 'simple',
     aiDifficulty: 'normal',
     bestOf: 1,
     match: publicSeries(createSeries(1)),
@@ -102,6 +106,7 @@ export function useBilliards() {
     } catch (_) {}
     try {
       ui.showGuide = localStorage.getItem(STORAGE_GUIDE) !== 'off'
+      if (localStorage.getItem(STORAGE_GUIDE_MODE) === 'full') ui.guideMode = 'full'
     } catch (_) {}
     try {
       const saved = localStorage.getItem(STORAGE_DIFFICULTY)
@@ -117,10 +122,12 @@ export function useBilliards() {
     engine = new BilliardsEngine(canvasRef.value)
     engine.overlayOpen = true
     engine.showGuide = ui.showGuide
+    engine.guideMode = ui.guideMode
     engine.onShoot = handleShoot
     engine.onRest = handleRest
-    engine.onPower = (value) => {
+    engine.onPower = (value, playerPower) => {
       ui.power = value
+      ui.playerPower = playerPower ?? 0.45
     }
     engine.onCharge = (value) => {
       ui.charging = value
@@ -131,8 +138,9 @@ export function useBilliards() {
     engine.onView = (view) => {
       ui.view = view
     }
-    engine.onSpin = (spin) => {
+    engine.onSpin = (spin, playerSpin) => {
       ui.spin = { x: spin.x, y: spin.y }
+      ui.playerSpin = { x: playerSpin.x, y: playerSpin.y }
     }
     engine.onError = () => {
       ui.webglError = true
@@ -276,12 +284,12 @@ export function useBilliards() {
     ui.selectedMode = mode
   }
 
-  // 本方开球时默认满力：开球是独立的一杆，不该继承电脑 / 对手留下的力度。
+  // 没有个人力度记录时，开球默认满力。
   function primeBreakPower() {
-    if (!state || !engine) return
+    if (!state || !engine || engine.playerPower !== null) return
     const mySeat = ui.online.status === 'playing' ? ui.online.seat : 0
     if (state.phase === 'aim' && state.breakShot && state.turn === mySeat)
-      engine.setPower(1)
+      engine.setPower(1, false)
   }
 
   function startLocal() {
@@ -393,7 +401,7 @@ export function useBilliards() {
     const shot = chooseAiShot(state, 1, ui.aiDifficulty)
     engine.angle = shot.angle
     engine.setPower(shot.power, false)
-    engine.setSpin(shot.spin)
+    engine.setSpin(shot.spin, false)
     aiTimer = setTimeout(() => {
       aiTimer = null
       if (!aiTurnReady()) return
@@ -657,6 +665,15 @@ export function useBilliards() {
     applyGuide(!ui.showGuide)
   }
 
+  function setGuideMode(mode) {
+    if (mode !== 'simple' && mode !== 'full') return
+    ui.guideMode = mode
+    if (engine) engine.guideMode = mode
+    try {
+      localStorage.setItem(STORAGE_GUIDE_MODE, mode)
+    } catch (_) {}
+  }
+
   function setRoomGuide(value) {
     if (ui.online.status !== 'idle') return
     ui.online.guide = !!value
@@ -719,12 +736,8 @@ export function useBilliards() {
       }
       return
     }
-    // state.turn 仍是刚出杆的一方；电脑可能用了加塞，停杆后把击点复位，
-    // 避免玩家下一杆误用电脑的旋转。
-    const aiShot = ui.online.status === 'idle' && state.turn === 1
     endShot(state)
     if (state.mode === 'pool') localSeries.breakMisses = [...state.breakMisses]
-    if (aiShot && engine) engine.setSpin({ x: 0, y: 0 })
     syncUi()
     if (state.phase === 'over') {
       openOverlayForResult()
@@ -1019,7 +1032,7 @@ export function useBilliards() {
         applyGuide(message.guide, false)
       }
       state = hydrateState(message.state)
-      engine.loadMatch(state)
+      engine.loadMatch(state, { keepPlayerAim: true })
       primeBreakPower()
       closeMenu()
       syncUi()
@@ -1146,11 +1159,11 @@ export function useBilliards() {
   }
 
   function setPower(value) {
-    engine?.setPower(value / 100)
+    if (ui.canShoot) engine?.setPower(value / 100)
   }
 
   function setSpin(spin) {
-    engine?.setSpin(spin)
+    if (ui.canShoot) engine?.setSpin(spin)
   }
 
   function nominateColor(number) {
@@ -1180,6 +1193,7 @@ export function useBilliards() {
       confirmConcede,
       cancelConcede,
       toggleGuide,
+      setGuideMode,
       toggleSettings,
       closeSettings,
       setRoomGuide,

@@ -427,16 +427,16 @@ function endSnooker(state) {
     Math.hypot(b.x - cueAtStart.x, b.y - cueAtStart.y) <= 2 * geo.R + 0.05)
   const direction = (ball) => Math.cos(state.shotAngle) * (ball.x - cueAtStart.x) +
     Math.sin(state.shotAngle) * (ball.y - cueAtStart.y)
-  const push = touching.find((ball) => firstHits.includes(ball.n) && direction(ball) > 0)
+  const movedTouchingBall = touching.find((ball) => firstHits.includes(ball.n) && direction(ball) > 0)
   const playedAway = !freeBall && touching.some((ball) => isBallOn(ball.n) && direction(ball) <= 0)
   const contactedOn = playedAway || (freeBall ? firstHits.includes(freeBall) : firstHits.some(isBallOn))
   const legalContact = playedAway || (contactedOn && firstHits.every((n) => n === freeBall || isBallOn(n)))
-  let why = push ? '推杆'
+  let why = movedTouchingBall ? '击动了贴球'
     : state.cueIn ? '白球落袋'
     : offTable.length ? '有球离开台面'
     : !legalContact ? firstHits.length ? '先碰了错误的球' : '未击中任何球'
     : ''
-  let foulValue = Math.max(4, ballOnValue, push ? colorValue(push.n) : 0)
+  let foulValue = Math.max(4, ballOnValue, movedTouchingBall ? colorValue(movedTouchingBall.n) : 0)
   for (const n of offTable) foulValue = Math.max(foulValue, colorValue(n) || 0)
   if (!legalContact)
     for (const n of firstHits)

@@ -36,64 +36,53 @@ function join(room) {
 </script>
 
 <template>
-  <div class="game-lobby">
-    <div class="lobby-head">
-      <div>
-        <h2>游戏大厅</h2>
-        <p>公开房间 · 申请后由房主同意加入</p>
-      </div>
-      <span
-        class="online-state"
-        :class="{ on: ui.online.connected }"
-      >
-        <i></i>{{ connecting ? '连接中' : ui.online.connected ? '已连接' : '未连接' }}
-      </span>
+  <div>
+    <p class="connection-state" :class="{ connected: ui.online.connected }" role="status">
+      {{ connecting ? '连接中' : ui.online.connected ? '已连接' : '未连接' }}
+    </p>
+
+    <div v-if="ui.online.status === 'requesting'" class="front-empty">
+      <h2>等待房主同意</h2>
+      <p>已向 {{ ui.online.code }} 房间发送加入申请。</p>
+      <button @click="actions.cancelJoinRequest">取消申请</button>
     </div>
 
-    <template v-if="ui.online.status === 'requesting'">
-      <div class="lobby-empty lobby-waiting">
-        <h3>等待房主同意</h3>
-        <p>已向 {{ ui.online.code }} 房间发送加入申请。</p>
-        <button @click="actions.cancelJoinRequest">取消申请</button>
-      </div>
-    </template>
-
     <template v-else>
-      <div class="online-name lobby-name">
+      <div class="front-field nickname-field">
         <label for="lobby-nickname">你的昵称</label>
         <input
           id="lobby-nickname"
           v-model="name"
           maxlength="12"
-          placeholder="申请加入前先填个昵称"
+          placeholder="输入昵称后可申请加入"
           autocomplete="off"
         />
       </div>
 
-      <div v-if="rooms.length" class="lobby-grid">
-        <article v-for="room in rooms" :key="room.code" class="lobby-card">
-          <span class="lobby-mode">{{ modeNameFor(room.mode) }}</span>
-          <h3>{{ room.host }}</h3>
-          <p>
-            {{ formatLabel(room.bestOf) }} · 辅助线{{ room.guide ? '开' : '关' }}
-          </p>
-          <div class="lobby-foot">
-            <span>1 / 2 人</span>
-            <button
-              :disabled="connecting || !nameReady"
-              @click="join(room)"
-            >
-              申请加入
-            </button>
+      <section v-if="rooms.length" aria-label="公开房间">
+        <h2 class="lobby-list-title">公开房间 <span>{{ rooms.length }}</span></h2>
+        <article v-for="room in rooms" :key="room.code" class="lobby-room">
+          <div class="lobby-room-info">
+            <h3>{{ room.host }}</h3>
+            <p>
+              {{ modeNameFor(room.mode) }} · {{ formatLabel(room.bestOf) }} ·
+              辅助线{{ room.guide ? '开' : '关' }}
+            </p>
           </div>
+          <span class="lobby-occupancy">1 / 2 人</span>
+          <button :disabled="connecting || !nameReady" @click="join(room)">
+            申请加入
+          </button>
         </article>
-      </div>
-      <div v-else class="lobby-empty">
-        <p>{{ connecting ? '正在连接大厅…' : '还没有公开房间。' }}</p>
-        <button @click="emit('create')">开一个公开房</button>
+      </section>
+      <div v-else class="front-empty">
+        <h2>{{ connecting ? '正在连接大厅…' : '暂无公开房间' }}</h2>
+        <button v-if="!connecting" class="front-primary" @click="emit('create')">
+          创建公开房间 <span aria-hidden="true">↗</span>
+        </button>
       </div>
     </template>
 
-    <p v-if="ui.online.error" class="online-error">{{ ui.online.error }}</p>
+    <p v-if="ui.online.error" class="online-error" role="alert">{{ ui.online.error }}</p>
   </div>
 </template>

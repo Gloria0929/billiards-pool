@@ -8,18 +8,13 @@ const props = defineProps({
   actions: { type: Object, required: true },
 })
 
+const emit = defineEmits(['browse'])
+
 const code = ref('')
 const copied = ref(false)
-let timer = null
-
-onMounted(() => {
-  props.actions.requestRooms()
-  timer = setInterval(() => props.actions.requestRooms(), 3000)
-})
-onBeforeUnmount(() => {
-  if (timer) clearInterval(timer)
-  timer = null
-})
+let copyTimer = null
+onMounted(() => props.actions.requestRooms())
+onBeforeUnmount(() => clearTimeout(copyTimer))
 
 const name = computed({
   get: () => props.ui.online.name,
@@ -46,12 +41,10 @@ const canJoin = computed(
 const statusText = computed(() => {
   if (connecting.value) return '连接中'
   if (requesting.value) return '等待房主'
-  if (inRoom.value) return '房间已就绪'
+  if (inRoom.value) return bothConnected.value ? '双方已就位' : '等待球员'
   if (props.ui.online.connected) return '大厅已连接'
   return '未连接'
 })
-
-const modeNameFor = (mode) => MODES[mode]?.name || '中式八球'
 
 function create() {
   if (!nameReady.value) return
@@ -63,67 +56,45 @@ function join() {
   props.actions.joinRoom(code.value)
 }
 
-function requestJoin(roomCode) {
-  if (!nameReady.value) return
-  props.actions.joinRoom(roomCode)
-}
-
 async function copyCode() {
   try {
     await navigator.clipboard.writeText(props.ui.online.code)
     copied.value = true
-    setTimeout(() => (copied.value = false), 1600)
+    clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => (copied.value = false), 1600)
   } catch (_) {}
 }
 </script>
 
 <template>
-  <div class="online-panel">
-    <div class="online-head">
-      <span class="online-title">联网对战</span>
-      <span
-        class="online-state"
-        :class="{ on: inRoom || ui.online.connected }"
-      >
-        <i></i>{{ statusText }}
-      </span>
-    </div>
+  <div>
+    <p class="connection-state" :class="{ connected: ui.online.connected }" role="status">
+      {{ statusText }}
+    </p>
 
     <template v-if="requesting">
-      <div class="room-card waiting-card">
-        <span class="room-caption">等待房主同意</span>
-        <div class="room-code">{{ ui.online.code }}</div>
-        <div class="room-note">
-          已发送加入申请，房主同意后就会进入房间。
-        </div>
-        <div class="room-actions">
-          <button @click="actions.cancelJoinRequest">取消申请</button>
-        </div>
+      <div class="front-empty">
+        <h2>等待房主同意</h2>
+        <p>已向 {{ ui.online.code }} 房间发送加入申请。</p>
+        <button @click="actions.cancelJoinRequest">取消申请</button>
       </div>
     </template>
 
     <template v-else-if="inRoom">
-      <div class="room-card">
-        <span class="room-caption">
-          {{ ui.online.visibility === 'public' ? '公开房间' : '私有房间' }}
-        </span>
-        <div class="room-code">{{ ui.online.code }}</div>
-        <button class="copy-code" @click="copyCode">
-          {{ copied ? '已复制' : '复制房间码' }}
-        </button>
-        <div class="room-note">
-          {{
-            ui.online.visibility === 'public'
-              ? '房间已出现在大厅，其他玩家申请加入后需要你同意。'
-              : '私有房间不会出现在大厅，把房间码发给朋友即可加入。'
-          }}
+      <section class="room-pass" aria-label="房间邀请">
+        <div class="room-pass-main">
+          <div>
+            <span>{{ ui.online.visibility === 'public' ? '公开房间码' : '私有房间码' }}</span>
+            <strong>{{ ui.online.code }}</strong>
+          </div>
+          <button @click="copyCode">{{ copied ? '已复制' : '复制房间码' }}</button>
         </div>
-        <div class="room-setting">
-          本局玩法 <b>{{ modeName }}</b> ·
-          <b>{{ formatLabel(ui.match.bestOf) }}</b> · 辅助线
-          <b>{{ ui.online.guide ? '开启' : '关闭' }}</b>
+        <div class="room-pass-details">
+          <span>{{ modeName }}</span>
+          <span>{{ formatLabel(ui.match.bestOf) }}</span>
+          <span>辅助线{{ ui.online.guide ? '开' : '关' }}</span>
         </div>
-      </div>
+      </section>
 
       <div
         v-if="ui.online.seat === 0 && ui.online.requests.length"
@@ -147,6 +118,7 @@ async function copyCode() {
         </div>
       </div>
 
+      <h2 class="roster-heading">球员</h2>
       <div class="seats">
         <div
           v-for="player in ui.online.players"
@@ -154,8 +126,9 @@ async function copyCode() {
           class="seat"
           :class="{ you: player.seat === ui.online.seat }"
         >
+          <span class="seat-avatar" aria-hidden="true">{{ player.name?.trim()[0] || '＋' }}</span>
           <span class="seat-name">
-            {{ player.name || '等待加入…' }}
+            {{ player.name || '等待加入' }}
             <em v-if="player.seat === ui.online.seat" class="pl-tag">你</em>
           </span>
           <span class="meta">
@@ -167,10 +140,11 @@ async function copyCode() {
         <button
           v-if="ui.online.seat === 0"
           id="start-online"
+          class="front-primary"
           :disabled="!bothConnected"
           @click="actions.startOnline"
         >
-          开始比赛 →
+          开始比赛
         </button>
         <span v-else-if="bothConnected" class="status-line">
           等待房主开始…
@@ -181,138 +155,89 @@ async function copyCode() {
     </template>
 
     <template v-else>
-      <div class="online-name">
+      <div class="front-field nickname-field">
         <label for="online-nickname">你的昵称</label>
         <input
           id="online-nickname"
           v-model="name"
           maxlength="12"
-          placeholder="对手会看到这个昵称"
+          placeholder="输入昵称"
           autocomplete="off"
         />
       </div>
-      <div class="online-grid">
-        <div class="online-card">
-          <h3>创建房间</h3>
-          <p>
-            以「{{ modeName }}」开一桌{{
-              ui.online.visibility === 'public'
-                ? '，公开房需要你同意加入申请。'
-                : '，私有房凭房间码加入。'
-            }}
-          </p>
-          <div class="mode-pick">
-            <span>玩法</span>
-            <div class="mode-pick-btns">
-              <button
-                :aria-pressed="ui.selectedMode === 'pool'"
-                @click="actions.selectMode('pool')"
-              >
+
+      <div class="online-setup">
+        <section class="create-room">
+          <h2>创建房间</h2>
+          <div class="online-option">
+            <span class="field-label">玩法</span>
+            <div class="front-segments" role="group" aria-label="玩法">
+              <button :aria-pressed="ui.selectedMode === 'pool'" @click="actions.selectMode('pool')">
                 中式八球
               </button>
-              <button
-                :aria-pressed="ui.selectedMode === 'snk'"
-                @click="actions.selectMode('snk')"
-              >
+              <button :aria-pressed="ui.selectedMode === 'snk'" @click="actions.selectMode('snk')">
                 斯诺克
               </button>
             </div>
           </div>
-          <div class="guide-option">
-            <span>房间类型</span>
-            <button
-              :aria-pressed="ui.online.visibility === 'public'"
-              @click="actions.setRoomVisibility('public')"
-            >
-              公开
-            </button>
-            <button
-              :aria-pressed="ui.online.visibility === 'private'"
-              @click="actions.setRoomVisibility('private')"
-            >
-              私有
-            </button>
+          <div class="online-option">
+            <span class="field-label">房间类型</span>
+            <div class="front-segments" role="group" aria-label="房间类型">
+              <button :aria-pressed="ui.online.visibility === 'public'" @click="actions.setRoomVisibility('public')">
+                公开
+              </button>
+              <button :aria-pressed="ui.online.visibility === 'private'" @click="actions.setRoomVisibility('private')">
+                私有
+              </button>
+            </div>
           </div>
-          <div class="guide-option">
-            <span>辅助线</span>
-            <button
-              :aria-pressed="ui.online.guide"
-              @click="actions.setRoomGuide(!ui.online.guide)"
-            >
-              {{ ui.online.guide ? '开启' : '关闭' }}
-            </button>
+          <div class="online-option">
+            <span class="field-label">辅助线</span>
+            <div class="front-segments">
+              <button :aria-pressed="ui.online.guide" @click="actions.setRoomGuide(!ui.online.guide)">
+                {{ ui.online.guide ? '开启' : '关闭' }}
+              </button>
+            </div>
           </div>
-          <div class="guide-option format-option">
-            <span>赛制</span>
-            <button
-              v-for="format in MATCH_FORMATS"
-              :key="format"
-              :aria-pressed="ui.bestOf === format"
-              @click="actions.setBestOf(format)"
-            >
-              {{ formatLabel(format) }}
-            </button>
+          <div class="online-option online-format">
+            <span class="field-label">赛制</span>
+            <div class="front-segments" role="group" aria-label="赛制">
+              <button
+                v-for="format in MATCH_FORMATS"
+                :key="format"
+                :aria-pressed="ui.bestOf === format"
+                @click="actions.setBestOf(format)"
+              >
+                {{ formatLabel(format) }}
+              </button>
+            </div>
           </div>
-          <div class="online-field">
-            <button
-              class="online-submit"
-              :disabled="connecting || !nameReady"
-              @click="create"
-            >
-              创建房间
-            </button>
-          </div>
-        </div>
-        <div class="online-card">
-          <h3>加入房间</h3>
-          <p>输入朋友发来的 5 位房间码；公开房需要房主同意。</p>
-          <div class="online-field">
+          <button class="front-primary" :disabled="connecting || !nameReady" @click="create">
+            创建房间 <span aria-hidden="true">↗</span>
+          </button>
+        </section>
+
+        <form class="join-room" @submit.prevent="join">
+          <h2>加入房间</h2>
+          <div class="front-field">
+            <label for="room-code">房间码</label>
             <input
               id="room-code"
               v-model="code"
               maxlength="6"
-              placeholder="ABCDE"
+              placeholder="输入房间码"
               autocomplete="off"
-              @keyup.enter="join"
+              autocapitalize="characters"
             />
-            <button :disabled="connecting || !canJoin" @click="join">
-              加入
-            </button>
           </div>
-        </div>
+          <button :disabled="connecting || !canJoin" type="submit">加入房间</button>
+          <button class="front-text-button" type="button" @click="emit('browse')">
+            查看公开房间 <span aria-hidden="true">→</span>
+          </button>
+        </form>
       </div>
-
-      <div class="online-card public-rooms">
-        <h3>公开房间</h3>
-        <div v-if="ui.online.rooms.length" class="room-list">
-          <div
-            v-for="room in ui.online.rooms"
-            :key="room.code"
-            class="room-item"
-          >
-            <div class="room-info">
-              <b>{{ room.host }}</b>
-              <span>
-                {{ modeNameFor(room.mode) }} · {{ formatLabel(room.bestOf) }} ·
-                辅助线{{ room.guide ? '开' : '关' }}
-              </span>
-            </div>
-            <button
-              :disabled="connecting || !nameReady"
-              @click="requestJoin(room.code)"
-            >
-              申请加入
-            </button>
-          </div>
-        </div>
-        <p v-else class="status-line">
-          暂无公开房间，创建一个等球友来吧。
-        </p>
-      </div>
-
-      <p v-if="connecting" class="status-line">正在连接联机服务器…</p>
     </template>
 
-    <p v-if="ui.online.error" class="online-error">{{ ui.online.error }}</p>
+    <p v-if="ui.online.error" class="online-error" role="alert">{{ ui.online.error }}</p>
   </div>
 </template>

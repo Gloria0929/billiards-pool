@@ -33,11 +33,11 @@ export class BilliardsEngine {
     this.cueTh = 0.07
     this.cameraReady = false
     this.showGuide = true
+    this.guideMode = 'simple'
     this.power = 0.45
-    // 本方玩家自己的力度。电脑 / 联机对手的瞄准只改 power（用于显示），
-    // 不能覆盖它，否则轮到本方时力度会被对手的数值顶掉。
-    this.playerPower = 0.45
+    this.playerPower = null
     this.spin = { x: 0, y: 0 }
+    this.playerSpin = { x: 0, y: 0 }
     this.angle = 0
     this.strikeT = 0
     this.strikeProgress = 0
@@ -572,7 +572,7 @@ export class BilliardsEngine {
     return { mesh, shadow }
   }
 
-  loadMatch(state) {
+  loadMatch(state, { keepPlayerAim = false } = {}) {
     if (!this.renderer) return
     this.state = state
     this.geo = getGeometry(state.mode)
@@ -591,9 +591,12 @@ export class BilliardsEngine {
     }
     this.animating = false
     this.acc = 0
-    this.power = 0.45
-    this.playerPower = 0.45
-    this.spin = { x: 0, y: 0 }
+    if (!keepPlayerAim) {
+      this.playerPower = null
+      this.playerSpin = { x: 0, y: 0 }
+    }
+    this.setPower(this.playerPower ?? 0.45, false)
+    this.setSpin(this.playerSpin, false)
     this.angle = 0
     this.orbitZoom = 1
     this.camH = 270
@@ -601,7 +604,6 @@ export class BilliardsEngine {
     this.cameraReady = false
     this.resize()
     audio.rollSound(0)
-    this.emitPower()
   }
 
   applyState(state) {
@@ -814,27 +816,33 @@ export class BilliardsEngine {
       const dx = Math.cos(this.angle)
       const dy = Math.sin(this.angle)
       const P = (x, y) => V3(tx(x), R, tz(y))
-      if (state.phase === 'aim') {
-        const guide = buildAimGuide(geo, state.balls, this.angle)
+      if (this.aimGroup.visible) {
+        const guide = buildAimGuide(
+          geo,
+          state.balls,
+          this.angle,
+          this.guideMode === 'full',
+        )
         const gx = guide.ghost.x
         const gy = guide.ghost.y
         const g = P(gx, gy)
         this.segment(this.lineA, P(cue.x, cue.y), g)
         this.ghost.position.copy(g)
         this.ghost.scale.setScalar(R)
-        if (guide.hitBall && guide.object && guide.deflect) {
-          const h = guide.hitBall
+        if (guide.object) {
           this.segment(
             this.lineB,
-            P(h.x, h.y),
+            P(guide.object.from.x, guide.object.from.y),
             P(guide.object.to.x, guide.object.to.y),
           )
+        } else this.lineB.visible = false
+        if (guide.deflect) {
           this.segment(
             this.lineC,
             g,
             P(gx + guide.deflect.x * 220, gy + guide.deflect.y * 220),
           )
-        } else this.lineB.visible = this.lineC.visible = false
+        } else this.lineC.visible = false
         this.setGuideLine(this.bankCueLine, guide.cueBank)
         this.setGuideLine(this.bankObjectLine, guide.objectBank)
         this.setPocketMark(this.cuePocketMark, guide.cueBank)
@@ -1196,22 +1204,23 @@ export class BilliardsEngine {
 
   /* ---------- 蓄力 ---------- */
   emitPower() {
-    this.onPower?.(this.power)
+    this.onPower?.(this.power, this.playerPower)
   }
 
-  // own=false 用于电脑 / 联机对手：只更新显示用的力度，不覆盖本方玩家的设置。
+  // 蓄力预览和对手瞄准只改当前显示。
   setPower(value, own = true) {
     this.power = clamp(value, 0.01, 1)
     if (own) this.playerPower = this.power
     this.emitPower()
   }
 
-  setSpin(spin) {
+  setSpin(spin, own = true) {
     this.spin = {
       x: clamp(spin.x, -0.65, 0.65),
       y: clamp(spin.y, -0.65, 0.65),
     }
-    this.onSpin?.(this.spin)
+    if (own) this.playerSpin = this.spin
+    this.onSpin?.(this.spin, this.playerSpin)
   }
 
   rotateAim(delta) {
@@ -1260,13 +1269,13 @@ export class BilliardsEngine {
     this.pull.d =
       (e.clientX - this.pull.x) * this.pull.k.x +
       (e.clientY - this.pull.y) * this.pull.k.y
-    this.setPower(this.pull.d < 8 ? 0.01 : Math.min(1, 0.02 + (this.pull.d / full) * 0.98))
+    this.setPower(this.pull.d < 8 ? 0.01 : Math.min(1, 0.02 + (this.pull.d / full) * 0.98), false)
   }
 
   endPull(e, cancel) {
     if (!this.pull || (e && e.pointerId !== this.pull.id)) return
     const ok = !cancel && this.pull.d >= 14 && this.state?.phase === 'aim'
-    if (!ok) this.setPower(this.pull.p0)
+    if (!ok) this.setPower(this.pull.p0, false)
     this.pull = null
     this.onCharge?.(false)
     if (ok) this.shoot()
@@ -1283,7 +1292,7 @@ export class BilliardsEngine {
     if (!this.space) return
     const s = this.space
     this.space = null
-    if (reset) this.setPower(s.p0)
+    if (reset) this.setPower(s.p0, false)
     this.onCharge?.(false)
   }
 
@@ -1291,7 +1300,7 @@ export class BilliardsEngine {
     if (!this.space) return
     const s = this.space
     this.space = null
-    if (cancel || s.t <= 0.22) this.setPower(s.p0)
+    if (cancel || s.t <= 0.22) this.setPower(s.p0, false)
     this.onCharge?.(false)
     if (!cancel && this.state?.phase === 'aim') this.shoot()
   }
@@ -1306,13 +1315,15 @@ export class BilliardsEngine {
     this.space.t += dt
     if (this.space.t > 0.22) {
       const u = ((this.space.t - 0.22) / 1.5) % 2
-      this.setPower(0.03 + 0.97 * (u < 1 ? u : 2 - u))
+      this.setPower(0.03 + 0.97 * (u < 1 ? u : 2 - u), false)
     }
   }
 
   shoot() {
     if (!this.acceptsInput() || !this.state || this.striking) return
     audio.ensureAudio()
+    this.playerPower = this.power
+    this.emitPower()
     const shot = {
       angle: this.angle,
       power: this.power,
@@ -1349,8 +1360,8 @@ export class BilliardsEngine {
       this.endPull(null, true)
       this.cancelSpace(true)
     } else if (enabled && !this.interactionEnabled) {
-      // 回到本方回合：恢复本方自己的力度，而不是对手 / 电脑留下的数值。
-      this.setPower(this.playerPower)
+      this.setPower(this.playerPower ?? (this.state?.breakShot ? 1 : 0.45), false)
+      this.setSpin(this.playerSpin, false)
     }
     this.interactionEnabled = enabled
   }
@@ -1389,16 +1400,13 @@ export class BilliardsEngine {
   applyRemoteAim(aim) {
     if (!aim || !this.state) return
     if (Number.isFinite(aim.angle)) this.angle = aim.angle
-    if (Number.isFinite(aim.power)) {
-      this.power = clamp(aim.power, 0.01, 1)
-      this.onPower?.(this.power)
-    }
+    if (Number.isFinite(aim.power)) this.setPower(aim.power, false)
     if (
       aim.spin &&
       Number.isFinite(aim.spin.x) &&
       Number.isFinite(aim.spin.y)
     )
-      this.setSpin({ x: aim.spin.x, y: aim.spin.y })
+      this.setSpin(aim.spin, false)
     if (aim.orbit) {
       if (Number.isFinite(aim.orbit.yaw)) this.orbitYaw = aim.orbit.yaw
       if (Number.isFinite(aim.orbit.pitch))

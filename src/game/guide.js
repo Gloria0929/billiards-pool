@@ -54,7 +54,7 @@ function bankFromWall(geo, balls, hit, dx, dy, ignoreN) {
   return { from, to: { x: next.x, y: next.y }, pocket: null }
 }
 
-export function buildAimGuide(geo, balls, angle) {
+export function buildAimGuide(geo, balls, angle, includeObject = true) {
   const { R } = geo
   const cue = balls[0]
   const dx = Math.cos(angle)
@@ -79,6 +79,8 @@ export function buildAimGuide(geo, balls, angle) {
     const dot = dx * nx + dy * ny
     guide.normal = { x: nx, y: ny }
     guide.deflect = { x: dx - dot * nx, y: dy - dot * ny }
+    if (!includeObject) return guide
+
     const objectPath = castRay(
       geo,
       balls,

@@ -45,7 +45,7 @@ onBeforeUnmount(() => {
       <div class="setting-text">
         <b>辅助线</b>
         <small>{{
-          guideLocked ? '本局由房主设置' : '显示预测线、翻袋线与进袋提示'
+          guideLocked ? '开启或关闭由房主设置' : '显示瞄准路线和进袋提示'
         }}</small>
       </div>
       <button
@@ -56,6 +56,30 @@ onBeforeUnmount(() => {
       >
         {{ ui.showGuide ? '开' : '关' }}
       </button>
+    </div>
+    <div class="setting-row">
+      <div class="setting-text">
+        <b>辅助线模式</b>
+        <small>
+          {{ ui.guideMode === 'simple' ? '只显示白球路线' : '显示白球与目标球路线' }}
+        </small>
+      </div>
+      <div class="setting-guide-modes" role="group" aria-label="辅助线显示模式">
+        <button
+          class="setting-switch"
+          :aria-pressed="ui.guideMode === 'simple'"
+          @click="actions.setGuideMode('simple')"
+        >
+          简易
+        </button>
+        <button
+          class="setting-switch"
+          :aria-pressed="ui.guideMode === 'full'"
+          @click="actions.setGuideMode('full')"
+        >
+          完整
+        </button>
+      </div>
     </div>
     <div class="setting-row">
       <div class="setting-text">

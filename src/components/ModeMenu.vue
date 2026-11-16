@@ -31,19 +31,27 @@ const freeBallColors = computed(() => {
     .map((ball) => ({ n: ball.n, label: SNK_NAMES[ball.n - 16] }))
 });
 
-const summary = computed(() => {
-  const base =
-    props.ui.selectedMode === "pool"
-      ? "已选中式八球 · 清完本组，再打黑八"
-      : "已选斯诺克 · 红彩交替，累计得分";
-  return props.ui.bestOf > 1 ? `${base} · ${formatLabel(props.ui.bestOf)}` : base;
-});
-const startLabel = computed(() =>
-  props.ui.selectedMode === "pool" ? "开始游戏 →" : "开始游戏 →",
-);
 const showModes = computed(() =>
   ["start", "paused"].includes(props.ui.menu.kind),
 );
+const frontRoom = computed(() =>
+  showModes.value || ["online", "local-over", "online-over", "online-left"].includes(props.ui.menu.kind),
+);
+const outcome = computed(() => props.ui.menu.kind.endsWith("-over"));
+const modes = [
+  { id: "pool", name: "中式八球", description: "清完本组球，再打黑八。", balls: 16 },
+  { id: "snk", name: "斯诺克", description: "红球和彩球交替得分。", balls: 22 },
+];
+const tabs = [
+  { id: "local", label: "人机对战" },
+  { id: "lobby", label: "游戏大厅" },
+  { id: "online", label: "联网对战" },
+];
+const difficulties = [
+  { id: "easy", label: "简单" },
+  { id: "normal", label: "普通" },
+  { id: "hard", label: "困难" },
+];
 const meReady = computed(
   () =>
     props.ui.online.seat != null &&
@@ -74,22 +82,36 @@ const localReplayLabel = computed(() => {
   return "下一局";
 });
 const panelTitle = computed(() => {
-  if (props.ui.menu.kind !== "start") return props.ui.menu.title;
-  if (tab.value === "lobby") return "球友在大厅等你。";
-  if (tab.value === "online") return "开一桌，或加入朋友。";
-  return props.ui.menu.title;
+  if (outcome.value) {
+    if (props.ui.winner < 0) return "本局平局";
+    const name = props.ui.names?.[props.ui.winner] || "玩家" + (props.ui.winner + 1);
+    return `${name}获胜`;
+  }
+  if (props.ui.menu.kind === "online" && props.ui.online.status === "room") return "对战房间";
+  if (!showModes.value) return props.ui.menu.title;
+  if (tab.value === "lobby") return "游戏大厅";
+  if (tab.value === "online") return "联网对战";
+  return "选择玩法";
 });
 const panelIntro = computed(() => {
-  if (props.ui.menu.kind !== "start") return props.ui.menu.intro;
-  if (tab.value === "lobby")
-    return "浏览公开房间，选一桌申请加入；房主同意后即可开局。";
-  if (tab.value === "online")
-    return "创建公开或私有房间，也可以输入朋友发来的房间码。";
-  return props.ui.menu.intro;
+  if (outcome.value) {
+    const message = props.ui.menu.title;
+    const detail = message.match(/[（(](.+)[）)]$/)?.[1];
+    return detail && !/^\d+\s*:\s*\d+$/.test(detail) ? detail : "";
+  }
+  if (!showModes.value || props.ui.menu.kind === "paused") return props.ui.menu.intro;
+  if (tab.value === "lobby") return "找一间公开房，向房主申请加入。";
+  if (tab.value === "online") return "创建房间，或输入房间码与朋友对战。";
+  return "";
 });
 function openOnlineFromLobby() {
   props.actions.setRoomVisibility("public");
   tab.value = "online";
+}
+
+function returnToLobby() {
+  props.actions.backToLobby();
+  tab.value = "lobby";
 }
 </script>
 
@@ -97,120 +119,86 @@ function openOnlineFromLobby() {
   <div
     id="ov"
     v-if="ui.menu.visible"
+    :class="{ 'front-room': frontRoom }"
     role="dialog"
     aria-modal="true"
     aria-labelledby="ovt"
   >
-    <section class="mode-panel">
-      <p class="eyebrow">THE BILLIARDS ROOM</p>
-      <h1 id="ovt">{{ panelTitle }}</h1>
-      <p class="intro">{{ panelIntro }}</p>
+    <div v-if="frontRoom" class="front-photo">
+      <div class="front-brand">
+        <span aria-hidden="true">8</span>
+        真实台球
+      </div>
+    </div>
 
-      <template v-if="showModes">
-        <div class="mode-tabs" role="tablist" aria-label="对局方式">
-          <button
-            role="tab"
-            :aria-pressed="tab === 'local'"
-            @click="tab = 'local'"
-          >
-            人机对战
-          </button>
-          <button
-            role="tab"
-            :aria-pressed="tab === 'lobby'"
-            @click="tab = 'lobby'"
-          >
-            游戏大厅
-          </button>
-          <button
-            role="tab"
-            :aria-pressed="tab === 'online'"
-            @click="tab = 'online'"
-          >
-            联网对战
-          </button>
-        </div>
+    <section :class="frontRoom ? 'front-panel' : 'mode-panel'">
+      <nav v-if="showModes" class="front-nav" aria-label="对局方式">
+        <button
+          v-for="item in tabs"
+          :key="item.id"
+          :aria-current="tab === item.id ? 'page' : null"
+          @click="tab = item.id"
+        >
+          {{ item.label }}
+        </button>
+      </nav>
 
-        <template v-if="tab === 'local'">
-          <div class="mode-options" aria-label="选择玩法">
-            <button
-              class="mode-card"
-              id="m1"
-              :aria-pressed="ui.selectedMode === 'pool'"
-              @click="actions.selectMode('pool')"
-            >
-              <span class="selected-mark" aria-hidden="true">✓</span>
-              <span class="mode-art" aria-hidden="true">
-                <span class="eight-ball"><span>8</span></span>
-              </span>
-              <strong>中式八球</strong>
-              <span class="en">CHINESE EIGHT-BALL</span>
-              <p>全色与花色，各有所属。<br />清完本组球，再将 8 号球打进。</p>
-              <span class="mode-meta">16 颗球 · 分组对抗 · 节奏明快</span>
-            </button>
-            <button
-              class="mode-card"
-              id="m2"
-              :aria-pressed="ui.selectedMode === 'snk'"
-              @click="actions.selectMode('snk')"
-            >
-              <span class="selected-mark" aria-hidden="true">✓</span>
-              <span class="mode-art" aria-hidden="true">
-                <svg viewBox="0 0 140 110">
-                  <defs>
-                    <radialGradient id="red" cx="30%" cy="20%">
-                      <stop stop-color="#e07b6b" />
-                      <stop offset=".4" stop-color="#ae342e" />
-                      <stop offset="1" stop-color="#571c1a" />
-                    </radialGradient>
-                  </defs>
-                  <g fill="url(#red)">
-                    <circle cx="70" cy="20" r="16" />
-                    <circle cx="52" cy="51" r="16" />
-                    <circle cx="88" cy="51" r="16" />
-                    <circle cx="34" cy="82" r="16" />
-                    <circle cx="70" cy="82" r="16" />
-                    <circle cx="106" cy="82" r="16" />
-                  </g>
-                </svg>
-              </span>
-              <strong>斯诺克</strong>
-              <span class="en">SNOOKER</span>
-              <p>红球与彩球交替得分。<br />更大的球台，更细腻的走位。</p>
-              <span class="mode-meta">22 颗球 · 积分较量 · 精准控球</span>
-            </button>
-          </div>
-          <div class="setup-card">
-            <div class="setup-top">
-              <div class="difficulty-row" aria-label="电脑难度">
-                <span class="setup-label">电脑难度</span>
-                <div class="difficulty-options">
+      <div class="menu-body">
+        <header class="menu-heading">
+          <button
+            v-if="ui.menu.kind === 'paused'"
+            id="resume"
+            class="front-text-button back-to-match"
+            @click="actions.resumeGame"
+          >
+            <span aria-hidden="true">←</span> 返回当前对局
+          </button>
+          <h1 id="ovt">{{ panelTitle }}</h1>
+          <p v-if="panelIntro" class="intro">{{ panelIntro }}</p>
+        </header>
+
+        <template v-if="showModes">
+          <template v-if="tab === 'local'">
+            <div class="play-options" role="group" aria-label="选择玩法">
+              <button
+                v-for="mode in modes"
+                :key="mode.id"
+                :id="mode.id === 'pool' ? 'm1' : 'm2'"
+                class="play-choice"
+                :aria-pressed="ui.selectedMode === mode.id"
+                @click="actions.selectMode(mode.id)"
+              >
+                <span class="play-icon" :class="'play-icon-' + mode.id" aria-hidden="true">
+                  <span v-if="mode.id === 'pool'" class="play-eight"><b>8</b></span>
+                  <span v-else class="play-reds"><i></i><i></i><i></i></span>
+                </span>
+                <span class="play-description">
+                  <strong>{{ mode.name }}</strong>
+                  <span>{{ mode.description }}</span>
+                </span>
+                <span class="play-count">{{ mode.balls }} 颗球</span>
+                <span class="play-indicator" aria-hidden="true"></span>
+              </button>
+            </div>
+
+            <div class="play-config">
+              <div class="play-setting">
+                <span class="field-label" id="difficulty-label">电脑难度</span>
+                <div class="front-segments" role="group" aria-labelledby="difficulty-label">
                   <button
-                    id="diff-easy"
-                    :aria-pressed="ui.aiDifficulty === 'easy'"
-                    @click="actions.setAiDifficulty('easy')"
+                    v-for="difficulty in difficulties"
+                    :id="'diff-' + difficulty.id"
+                    :key="difficulty.id"
+                    :aria-pressed="ui.aiDifficulty === difficulty.id"
+                    @click="actions.setAiDifficulty(difficulty.id)"
                   >
-                    简单
-                  </button>
-                  <button
-                    id="diff-normal"
-                    :aria-pressed="ui.aiDifficulty === 'normal'"
-                    @click="actions.setAiDifficulty('normal')"
-                  >
-                    普通
-                  </button>
-                  <button
-                    id="diff-hard"
-                    :aria-pressed="ui.aiDifficulty === 'hard'"
-                    @click="actions.setAiDifficulty('hard')"
-                  >
-                    困难
+                    {{ difficulty.label }}
                   </button>
                 </div>
               </div>
-              <div class="difficulty-row" aria-label="赛制">
-                <span class="setup-label">赛制</span>
-                <div class="difficulty-options">
+              <div class="play-setting">
+                <span class="field-label" id="format-label">赛制</span>
+                <div class="front-segments" role="group" aria-labelledby="format-label">
                   <button
                     v-for="format in MATCH_FORMATS"
                     :key="format"
@@ -221,173 +209,143 @@ function openOnlineFromLobby() {
                   </button>
                 </div>
               </div>
+              <p class="difficulty-hint">{{ difficultyNote }}</p>
             </div>
-            <p class="difficulty-note">{{ difficultyNote }}</p>
-          </div>
-          <div class="mode-footer">
-            <p>
-              <span id="mode-summary">{{ summary }}</span
-              ><br /><span class="footer-hint"
-                >你与电脑轮流击球 · 支持鼠标与触屏</span
-              >
-            </p>
-            <button id="start" @click="actions.startLocal">
-              {{ startLabel }}
+            <button id="start" class="front-primary start-game" @click="actions.startLocal">
+              开始对局 <span aria-hidden="true">↗</span>
             </button>
-          </div>
-          <button
-            v-if="ui.menu.kind === 'paused'"
-            id="resume"
-            @click="actions.resumeGame"
-          >
-            返回当前对局
-          </button>
+          </template>
+
+          <GameLobby
+            v-else-if="tab === 'lobby'"
+            :ui="ui"
+            :actions="actions"
+            @create="openOnlineFromLobby"
+          />
+
+          <OnlinePanel v-else :ui="ui" :actions="actions" @browse="tab = 'lobby'" />
         </template>
 
-        <GameLobby
-          v-else-if="tab === 'lobby'"
-          :ui="ui"
-          :actions="actions"
-          @create="openOnlineFromLobby"
-        />
+        <template v-else-if="ui.menu.kind === 'break-choice'">
+          <div v-if="ui.menu.mine" class="room-actions">
+            <button
+              v-if="ui.menu.breakKind !== 'no-contact'"
+              id="break-accept"
+              @click="actions.resolveBreakChoice('accept')"
+            >
+              {{ ui.menu.breakKind === 'foul' ? '线后自由球' : ui.menu.breakKind === 'eight' ? '复位黑八并续打' : '接受台面' }}
+            </button>
+            <button
+              id="break-self"
+              @click="actions.resolveBreakChoice('rerack', 'self')"
+            >
+              我重新开球
+            </button>
+            <button
+              v-if="ui.menu.breakKind !== 'eight'"
+              id="break-offender"
+              @click="actions.resolveBreakChoice('rerack', 'offender')"
+            >
+              让对方重开
+            </button>
+          </div>
+          <p v-else class="rematch-note">等待对手选择…</p>
+        </template>
 
-        <OnlinePanel v-else :ui="ui" :actions="actions" />
-      </template>
+        <template v-else-if="ui.menu.kind === 'foul-choice'">
+          <div v-if="ui.menu.mine" class="room-actions">
+            <button id="foul-play" @click="actions.chooseFoulPlay">
+              {{ ui.menu.choiceKind === 'stalemate' ? '同意重摆' : ui.menu.choiceKind === 'concede' ? '接受认输' : ui.menu.choiceKind === 'black' ? '我先打' : '自己击球' }}
+            </button>
+            <button
+              id="foul-again"
+              @click="actions.resolveFoulChoice('again')"
+            >
+              {{ ['concede', 'stalemate'].includes(ui.menu.choiceKind) ? '继续本局' : ui.menu.choiceKind === 'black' ? '让对方先打' : '让对手重打' }}
+            </button>
+            <button
+              v-if="ui.menu.miss"
+              id="foul-replay"
+              @click="actions.resolveFoulChoice('replay')"
+            >
+              回原位重打
+            </button>
+          </div>
+          <p v-else class="rematch-note">等待对手选择…</p>
+        </template>
 
-      <template v-else-if="ui.menu.kind === 'break-choice'">
-        <div v-if="ui.menu.mine" class="room-actions">
-          <button
-            v-if="ui.menu.breakKind !== 'no-contact'"
-            id="break-accept"
-            @click="actions.resolveBreakChoice('accept')"
-          >
-            {{ ui.menu.breakKind === 'foul' ? '线后自由球' : ui.menu.breakKind === 'eight' ? '复位黑八并续打' : '接受台面' }}
-          </button>
-          <button
-            id="break-self"
-            @click="actions.resolveBreakChoice('rerack', 'self')"
-          >
-            我重新开球
-          </button>
-          <button
-            v-if="ui.menu.breakKind !== 'eight'"
-            id="break-offender"
-            @click="actions.resolveBreakChoice('rerack', 'offender')"
-          >
-            让对方重开
-          </button>
-        </div>
-        <p v-else class="rematch-note">等待对手选择…</p>
-      </template>
+        <template v-else-if="ui.menu.kind === 'free-ball'">
+          <div class="room-actions free-ball-actions">
+            <button
+              v-for="color in freeBallColors"
+              :key="color.n"
+              @click="actions.resolveFoulChoice('play', color.n)"
+            >
+              {{ color.label }}球
+            </button>
+            <button @click="actions.resolveFoulChoice('play')">
+              不用自由球
+            </button>
+          </div>
+        </template>
 
-      <template v-else-if="ui.menu.kind === 'foul-choice'">
-        <div v-if="ui.menu.mine" class="room-actions">
-          <button id="foul-play" @click="actions.chooseFoulPlay">
-            {{ ui.menu.choiceKind === 'stalemate' ? '同意重摆' : ui.menu.choiceKind === 'concede' ? '接受认输' : ui.menu.choiceKind === 'black' ? '我先打' : '自己击球' }}
-          </button>
-          <button
-            id="foul-again"
-            @click="actions.resolveFoulChoice('again')"
-          >
-            {{ ['concede', 'stalemate'].includes(ui.menu.choiceKind) ? '继续本局' : ui.menu.choiceKind === 'black' ? '让对方先打' : '让对手重打' }}
-          </button>
-          <button
-            v-if="ui.menu.miss"
-            id="foul-replay"
-            @click="actions.resolveFoulChoice('replay')"
-          >
-            回原位重打
-          </button>
-        </div>
-        <p v-else class="rematch-note">等待对手选择…</p>
-      </template>
+        <template v-else-if="ui.menu.kind === 'concede'">
+          <div class="room-actions">
+            <button id="concede-yes" @click="actions.confirmConcede">
+              确认认输
+            </button>
+            <button id="concede-no" @click="actions.cancelConcede">
+              继续比赛
+            </button>
+          </div>
+        </template>
 
-      <template v-else-if="ui.menu.kind === 'free-ball'">
-        <div class="room-actions free-ball-actions">
-          <button
-            v-for="color in freeBallColors"
-            :key="color.n"
-            @click="actions.resolveFoulChoice('play', color.n)"
-          >
-            {{ color.label }}球
-          </button>
-          <button @click="actions.resolveFoulChoice('play')">
-            不用自由球
-          </button>
-        </div>
-      </template>
+        <template v-else-if="ui.menu.kind === 'online'">
+          <OnlinePanel :ui="ui" :actions="actions" @browse="returnToLobby" />
+        </template>
 
-      <template v-else-if="ui.menu.kind === 'concede'">
-        <div class="room-actions">
-          <button id="concede-yes" @click="actions.confirmConcede">
-            确认认输
-          </button>
-          <button id="concede-no" @click="actions.cancelConcede">
-            继续比赛
-          </button>
-        </div>
-      </template>
+        <template v-else-if="outcome">
+          <div v-if="ui.mode === 'snk' || ui.match.bestOf > 1" class="result-scoreboard" aria-label="本场比分">
+            <div v-for="seat in [0, 1]" :key="seat" class="result-score" :class="{ winner: ui.winner === seat }">
+              <span>{{ ui.names?.[seat] || "玩家" + (seat + 1) }}</span>
+              <strong>{{ ui.mode === 'snk' ? ui.scores[seat] : ui.match.wins[seat] }}</strong>
+            </div>
+          </div>
+          <p v-if="ui.match.bestOf > 1" class="match-line">
+            第 {{ ui.match.frame }} 局 · {{ formatLabel(ui.match.bestOf) }}
+            <template v-if="ui.mode === 'snk'">
+              · 局分 {{ ui.match.wins[0] }} : {{ ui.match.wins[1] }}
+            </template>
+          </p>
+          <div v-if="ui.menu.kind === 'local-over'" class="room-actions">
+            <button id="local-again" class="front-primary" @click="actions.playAgainLocal">
+              {{ localReplayLabel }}
+            </button>
+            <button @click="actions.exitToHome">返回首页</button>
+          </div>
+          <template v-else>
+            <div class="room-actions">
+              <button
+                id="start-online"
+                class="front-primary"
+                :disabled="meReady"
+                @click="actions.requestRematch"
+              >
+                {{ replayLabel }}
+              </button>
+              <button @click="returnToLobby">返回大厅</button>
+            </div>
+            <p class="rematch-note">{{ rematchText }}</p>
+          </template>
+        </template>
 
-      <template v-else-if="ui.menu.kind === 'online'">
-        <OnlinePanel :ui="ui" :actions="actions" />
-      </template>
+        <template v-else-if="ui.menu.kind === 'online-left'">
+          <div class="room-actions">
+            <button @click="returnToLobby">返回大厅</button>
+          </div>
+        </template>
 
-      <template v-else-if="ui.menu.kind === 'local-over'">
-        <p class="final-score">
-          <span v-if="ui.mode === 'snk'">
-            {{ ui.scores[0] }} : {{ ui.scores[1] }}
-          </span>
-          <span v-else
-            >{{ ui.names?.[ui.winner] || "玩家" + (ui.winner + 1) }} 获胜</span
-          >
-        </p>
-        <p v-if="ui.match.bestOf > 1" class="match-line">
-          第 {{ ui.match.frame }} 局 · 局分 {{ ui.match.wins[0] }} :
-          {{ ui.match.wins[1] }} · {{ formatLabel(ui.match.bestOf) }}
-        </p>
-        <div class="room-actions">
-          <button id="local-again" @click="actions.playAgainLocal">
-            {{ localReplayLabel }}
-          </button>
-          <button @click="actions.exitToHome">退出</button>
-        </div>
-      </template>
-
-      <template v-else-if="ui.menu.kind === 'online-over'">
-        <p class="final-score">
-          <span v-if="ui.mode === 'snk'">
-            {{ ui.scores[0] }} : {{ ui.scores[1] }}
-          </span>
-          <span v-else
-            >{{ ui.names?.[ui.winner] || "玩家" + (ui.winner + 1) }} 获胜</span
-          >
-        </p>
-        <p v-if="ui.match.bestOf > 1" class="match-line">
-          第 {{ ui.match.frame }} 局 · 局分 {{ ui.match.wins[0] }} :
-          {{ ui.match.wins[1] }} · {{ formatLabel(ui.match.bestOf) }}
-        </p>
-        <div class="room-actions">
-          <button
-            id="start-online"
-            :disabled="meReady"
-            @click="actions.requestRematch"
-          >
-            {{ replayLabel }}
-          </button>
-          <button @click="actions.backToLobby">返回大厅</button>
-        </div>
-        <p class="rematch-note">{{ rematchText }}</p>
-      </template>
-
-      <template v-else-if="ui.menu.kind === 'online-left'">
-        <div class="room-actions">
-          <button @click="actions.backToLobby">返回大厅</button>
-        </div>
-      </template>
-
-      <p v-if="ui.menu.kind !== 'online-left'" class="notice">
-        内置休闲规则与瞄准辅助。开局后可随时切换俯视、3D 全景与贴杆视角。
-      </p>
+      </div>
     </section>
   </div>
 </template>

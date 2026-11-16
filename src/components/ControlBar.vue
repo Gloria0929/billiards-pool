@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount } from 'vue'
+import { computed, onBeforeUnmount } from 'vue'
 import SpinPad from './SpinPad.vue'
 import { AIM_NUDGE } from '../game/constants.js'
 
@@ -10,6 +10,10 @@ const props = defineProps({
 
 let timer = null
 let held = 0
+const spin = computed(() => props.ui.canShoot ? props.ui.spin : props.ui.playerSpin)
+const powerPercent = computed(() =>
+  Math.round((props.ui.canShoot ? props.ui.power : props.ui.playerPower) * 100),
+)
 
 function nudge(direction, step) {
   props.actions.nudge(direction * step)
@@ -39,7 +43,7 @@ onBeforeUnmount(stopNudge)
   <footer id="ctl" :inert="ui.menu.visible">
     <div class="spin-wrap">
       <SpinPad
-        :spin="ui.spin"
+        :spin="spin"
         :disabled="!ui.canShoot"
         @update="actions.setSpin"
       />
@@ -75,11 +79,11 @@ onBeforeUnmount(stopNudge)
         type="range"
         min="1"
         max="100"
-        :value="Math.round(ui.power * 100)"
+        :value="powerPercent"
         :disabled="!ui.canShoot"
         @input="actions.setPower(Number($event.target.value))"
       />
-      <output id="power-value">{{ Math.round(ui.power * 100) }}%</output>
+      <output id="power-value">{{ powerPercent }}%</output>
     </label>
     <button
       id="go"
