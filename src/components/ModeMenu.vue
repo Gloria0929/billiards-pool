@@ -19,11 +19,15 @@ const difficultyNote = computed(
 );
 
 const SNK_NAMES = ["黄", "绿", "棕", "蓝", "粉", "黑"];
-const freeBallColors = computed(() =>
-  props.ui.balls
-    .filter((ball) => ball.on && ball.n >= 16)
-    .map((ball) => ({ n: ball.n, label: SNK_NAMES[ball.n - 16] })),
-);
+const freeBallColors = computed(() => {
+  const seqColor =
+    !props.ui.snookerOnRed && !props.ui.snookerFinalColor
+      ? 16 + props.ui.snookerColorIndex
+      : null
+  return props.ui.balls
+    .filter((ball) => ball.on && ball.n >= 16 && ball.n !== seqColor)
+    .map((ball) => ({ n: ball.n, label: SNK_NAMES[ball.n - 16] }))
+});
 
 const summary = computed(() =>
   props.ui.selectedMode === "pool"
@@ -187,10 +191,17 @@ const rematchText = computed(() => {
             自己击球
           </button>
           <button
+            id="foul-again"
+            @click="actions.resolveFoulChoice('again')"
+          >
+            让对手重打
+          </button>
+          <button
+            v-if="ui.menu.miss"
             id="foul-replay"
             @click="actions.resolveFoulChoice('replay')"
           >
-            让对手重打
+            回原位重打
           </button>
         </div>
         <p v-else class="rematch-note">等待对手选择…</p>

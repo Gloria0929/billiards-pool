@@ -1168,7 +1168,7 @@ export class BilliardsEngine {
     const { R, W, H, PR } = this.geo
     if (this.state.mode === 'snk') {
       if (p.x > 737 || Math.hypot(p.x - 737, p.y - H / 2) > 292) return false
-    } else if (this.state.breakShot && p.x > W / 4) return false
+    } else if ((this.state.breakShot || this.state.inHandLine) && p.x > W / 4) return false
     if (p.x < R || p.x > W - R || p.y < R || p.y > H - R) return false
     if (PR.some((q) => Math.hypot(p.x - q[0], p.y - q[1]) < q[2] * 0.85 + R * 0.2))
       return false

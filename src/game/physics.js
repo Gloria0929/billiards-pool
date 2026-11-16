@@ -56,6 +56,10 @@ export function bounce(state, b, nx, ny) {
   b.wy -= k * s * ny
   b.wz -= k * c
   pushEvent(state, 'r', -vn, b.x, b.y, b.n)
+  // 规则判定用的碰库记录：events 每帧会被音效消费清空，这里单独保留。
+  if (state.firstHit !== null) state.railAfterContact = true
+  if (b.n >= 1 && Array.isArray(state.railBalls) && !state.railBalls.includes(b.n))
+    state.railBalls.push(b.n)
 }
 
 function wall(state, b) {

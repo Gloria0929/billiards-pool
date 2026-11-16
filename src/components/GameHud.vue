@@ -90,6 +90,14 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
       :score="ui.scores[seat]"
       :balls="ui.balls"
     />
+    <div
+      v-if="ui.mode === 'snk' && ui.phase !== 'over'"
+      class="hud-remaining"
+      title="台面理论最高可得分数：每颗红球按红+黑计，彩球按面值计"
+    >
+      <small>台面最高分</small>
+      <b>{{ ui.snookerRemaining }}</b>
+    </div>
     <div class="hud-actions">
       <nav class="viewbar viewbar-inline" aria-label="选择视角">
         <button

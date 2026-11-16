@@ -370,14 +370,26 @@ function handleMessage(ws, message) {
       send(ws, { type: 'error', message: '还没轮到你选择。' })
       return
     }
-    const decision = message.decision === 'replay' ? 'replay' : 'play'
+    const decision =
+      message.decision === 'replay'
+        ? choice.miss
+          ? 'replay'
+          : 'again'
+        : message.decision === 'again'
+          ? 'again'
+          : 'play'
     const freeBall = Number.isInteger(message.freeBall)
       ? message.freeBall
       : null
     if (decision === 'play' && choice.freeBall && freeBall != null) {
+      const seqColor =
+        room.state.sn.onRed || room.state.sn.finalColor
+          ? null
+          : 16 + room.state.sn.idx
       if (
         freeBall < 16 ||
         freeBall > 21 ||
+        freeBall === seqColor ||
         !room.state.balls.some((ball) => ball.on && ball.n === freeBall)
       ) {
         send(ws, { type: 'error', message: '自由球选择无效。' })

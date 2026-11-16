@@ -130,11 +130,14 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
     turn: 0,
     grp: [null, null],
     inHand: true,
+    inHandLine: false,
     breakShot: true,
     canEight: false,
     firstHit: null,
     potted: [],
     cueIn: false,
+    railBalls: [],
+    railAfterContact: false,
     sn: {
       score: [0, 0],
       onRed: true,
@@ -142,7 +145,7 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
       finalColor: false,
       choice: null,
       freeBall: null,
-      foulStreak: { seat: null, count: 0 },
+      missStreak: { seat: null, count: 0 },
       decider: false,
     },
     phase: 'aim',
@@ -159,6 +162,7 @@ function captureShotStart(state) {
     turn: state.turn,
     grp: [...state.grp],
     inHand: state.inHand,
+    inHandLine: state.inHandLine,
     breakShot: state.breakShot,
     canEight: state.canEight,
     sn: {
@@ -181,7 +185,8 @@ export function launchShot(state, shot) {
   }
 
   if (state.inHand && shot.cue && Number.isFinite(shot.cue.x) && Number.isFinite(shot.cue.y)) {
-    const x = clamp(shot.cue.x, 0, W)
+    let x = clamp(shot.cue.x, 0, W)
+    if (state.inHandLine) x = Math.min(x, W / 4)
     const y = clamp(shot.cue.y, 0, H)
     cue.x = x
     cue.y = y
@@ -221,7 +226,10 @@ export function launchShot(state, shot) {
   state.firstHit = null
   state.potted = []
   state.cueIn = false
+  state.railBalls = []
+  state.railAfterContact = false
   state.inHand = false
+  state.inHandLine = false
   state.phase = 'moving'
   state.shotAnchor = { x: cue.x, y: cue.y }
   state.winner = null
@@ -262,6 +270,7 @@ export function publicState(state) {
     turn: state.turn,
     grp: [...state.grp],
     inHand: state.inHand,
+    inHandLine: state.inHandLine,
     breakShot: state.breakShot,
     canEight: state.canEight,
     firstHit: state.firstHit,
@@ -277,10 +286,12 @@ export function publicState(state) {
             seat: state.sn.choice.seat,
             offender: state.sn.choice.offender,
             freeBall: !!state.sn.choice.freeBall,
+            miss: !!state.sn.choice.miss,
+            warn: !!state.sn.choice.warn,
           }
         : null,
       freeBall: state.sn.freeBall || null,
-      foulStreak: { ...state.sn.foulStreak },
+      missStreak: { ...state.sn.missStreak },
       decider: !!state.sn.decider,
     },
     phase: state.phase,
@@ -306,8 +317,9 @@ export function hydrateState(data) {
   state.sn.finalColor = !!state.sn.finalColor
   state.sn.choice = state.sn.choice || null
   state.sn.freeBall = state.sn.freeBall || null
-  state.sn.foulStreak = state.sn.foulStreak || { seat: null, count: 0 }
+  state.sn.missStreak = state.sn.missStreak || { seat: null, count: 0 }
   state.sn.decider = !!state.sn.decider
+  state.inHandLine = !!state.inHandLine
   return state
 }
 
@@ -324,6 +336,7 @@ export function snapshot(state) {
     scores: [...state.sn.score],
     onRed: state.sn.onRed,
     colorIndex: state.sn.idx,
+    finalColor: !!state.sn.finalColor,
     inHand: state.inHand,
     breakShot: state.breakShot,
     names: state.names ? [...state.names] : null,

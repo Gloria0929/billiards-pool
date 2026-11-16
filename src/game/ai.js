@@ -229,7 +229,7 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
         rack.reduce((sum, ball) => sum + ball.y, 0) / rack.length
       return {
         angle: Math.atan2(cy - cue.y, cx - cue.x),
-        power: 0.95,
+        power: 1,
         spin: { x: 0, y: 0 },
         cue: cueRef,
       }

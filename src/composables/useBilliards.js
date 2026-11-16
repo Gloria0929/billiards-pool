@@ -35,6 +35,10 @@ export function useBilliards() {
     turn: 0,
     groups: [null, null],
     scores: [0, 0],
+    snookerRemaining: 0,
+    snookerOnRed: true,
+    snookerColorIndex: 0,
+    snookerFinalColor: false,
     names: null,
     balls: [],
     message: '',
@@ -156,6 +160,11 @@ export function useBilliards() {
     ui.turn = snap.turn
     ui.groups = snap.groups
     ui.scores = snap.scores
+    ui.snookerRemaining =
+      snap.mode === 'snk' ? snookerPointsRemaining(state) : 0
+    ui.snookerOnRed = snap.onRed
+    ui.snookerColorIndex = snap.colorIndex
+    ui.snookerFinalColor = snap.finalColor
     ui.names = snap.names
     ui.balls = snap.balls
     ui.message = snap.message
@@ -307,14 +316,25 @@ export function useBilliards() {
       'foul-choice',
       '犯规判罚。',
       mine
-        ? `罚分已计入。你可以自己击球，也可以让对手回到犯规前的球位重打。${
+        ? `罚分已计入。你可以自己击球、让对手从球停下的位置重打${
+            choice.miss ? '，或让他回到犯规前的球位重打' : ''
+          }。${
             choice.freeBall
               ? ' 白球被完全挡住，下一步可以选择自由球。'
               : ''
+          }${
+            choice.warn
+              ? ' 警告：对手再次未击中目标球将判负本局。'
+              : ''
           }`
-        : '等待对手选择：自己击球，或让你回到犯规前的球位重打。',
+        : `等待对手选择：自己击球、让你从当前位置重打${
+            choice.miss ? '，或让你回到犯规前的球位重打' : ''
+          }。`,
     )
     ui.menu.mine = mine
+    ui.menu.miss = !!choice.miss
+    ui.menu.warn = !!choice.warn
+    ui.menu.freeBall = !!choice.freeBall
   }
 
   function syncOnlineFoulChoice() {
@@ -343,9 +363,15 @@ export function useBilliards() {
         state.sn?.choice?.seat === 1
       ) {
         const choice = state.sn.choice
+        const seqColor =
+          state.sn.onRed || state.sn.finalColor
+            ? null
+            : 16 + state.sn.idx
         const color = choice.freeBall
-          ? [21, 20, 19, 18, 17, 16].find((n) =>
-              state.balls.some((ball) => ball.on && ball.n === n),
+          ? [21, 20, 19, 18, 17, 16].find(
+              (n) =>
+                n !== seqColor &&
+                state.balls.some((ball) => ball.on && ball.n === n),
             ) || null
           : null
         resolveFoulChoice('play', color)
