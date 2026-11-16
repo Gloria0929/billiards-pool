@@ -248,7 +248,8 @@ export class BilliardsEngine {
         x.textBaseline = 'middle'
         x.fillText(n, u, 131)
       }
-    else {
+    else if (this.geo.mode !== 'snk') {
+      // 斯诺克的白球是纯白色；红点只用于中式八球的红点练习球。
       x.fillStyle = '#c22'
       for (const u of [0, 128, 256, 384, 512]) {
         x.beginPath()
