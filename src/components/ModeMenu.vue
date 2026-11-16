@@ -256,8 +256,12 @@ function openOnlineFromLobby() {
 
       <template v-else-if="ui.menu.kind === 'break-choice'">
         <div v-if="ui.menu.mine" class="room-actions">
-          <button id="break-accept" @click="actions.resolveBreakChoice('accept')">
-            接受台面
+          <button
+            v-if="ui.menu.breakKind !== 'no-contact'"
+            id="break-accept"
+            @click="actions.resolveBreakChoice('accept')"
+          >
+            {{ ui.menu.breakKind === 'foul' ? '线后自由球' : ui.menu.breakKind === 'eight' ? '复位黑八并续打' : '接受台面' }}
           </button>
           <button
             id="break-self"
@@ -266,6 +270,7 @@ function openOnlineFromLobby() {
             我重新开球
           </button>
           <button
+            v-if="ui.menu.breakKind !== 'eight'"
             id="break-offender"
             @click="actions.resolveBreakChoice('rerack', 'offender')"
           >
@@ -278,13 +283,13 @@ function openOnlineFromLobby() {
       <template v-else-if="ui.menu.kind === 'foul-choice'">
         <div v-if="ui.menu.mine" class="room-actions">
           <button id="foul-play" @click="actions.chooseFoulPlay">
-            自己击球
+            {{ ui.menu.choiceKind === 'stalemate' ? '同意重摆' : ui.menu.choiceKind === 'concede' ? '接受认输' : ui.menu.choiceKind === 'black' ? '我先打' : '自己击球' }}
           </button>
           <button
             id="foul-again"
             @click="actions.resolveFoulChoice('again')"
           >
-            让对手重打
+            {{ ['concede', 'stalemate'].includes(ui.menu.choiceKind) ? '继续本局' : ui.menu.choiceKind === 'black' ? '让对方先打' : '让对手重打' }}
           </button>
           <button
             v-if="ui.menu.miss"

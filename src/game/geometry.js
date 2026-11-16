@@ -96,7 +96,7 @@ export function colorSpot(geo, n) {
 export function canPlace(geo, state, x, y) {
   return geo.mode === 'snk'
     ? x <= BX && Math.hypot(x - BX, y - geo.H / 2) <= DR
-    : state.breakShot
+    : (state.breakShot || state.inHandLine)
       ? x <= geo.W / 4
       : true
 }

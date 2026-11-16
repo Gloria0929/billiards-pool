@@ -1,5 +1,6 @@
-import { cueSpot, colorSpot } from './geometry.js'
-import { castRay, free, place } from './physics.js'
+import { BX, DR } from './constants.js'
+import { colorSpot } from './geometry.js'
+import { free, place, placeCue } from './physics.js'
 
 const STRIPE_THRESHOLD = 8
 const SNK_NAMES = ['黄', '绿', '棕', '蓝', '粉', '黑']
@@ -10,28 +11,44 @@ export const playerLabel = (state, seat) =>
   (state.names && state.names[seat]) || `玩家${seat + 1}`
 
 const COLOR_VALUES = [2, 3, 4, 5, 6, 7]
-const colorValue = (n) => (n <= 15 ? 1 : COLOR_VALUES[n - 16])
+const colorValue = (n) => n >= 1 && n <= 15 ? 1 : COLOR_VALUES[n - 16]
 const redsOnTable = (state) =>
   state.balls.filter((b) => b.on && b.n >= 1 && b.n <= 15).length
 
-// 开球犯规后，白球只能放在开球线后；从开球点向左侧找空位。
-function placeCueInLine(geo, balls) {
-  const cue = balls[0]
+function spotPoolBall(state, number) {
+  const { geo, balls } = state
+  const ball = balls.find((b) => b.n === number)
+  const x0 = geo.W * 0.75
   const y = geo.H / 2
-  for (let d = 0; d < 30; d++) {
-    const x = geo.W / 4 - d * 2 * geo.R
-    if (x < geo.R) break
-    if (!free(geo, balls, x, y, cue)) continue
-    cue.x = x
-    cue.y = y
-    cue.on = true
-    cue.vx = cue.vy = cue.wx = cue.wy = cue.wz = 0
-    cue.st = 0
-    cue.q = null
-    cue.fallSpin = null
-    return
+  for (const direction of [1, -1]) {
+    for (let x = x0; x >= geo.R && x <= geo.W - geo.R; x += direction) {
+      if (free(geo, balls, x, y, ball)) {
+        place(geo, balls, ball, x, y)
+        return
+      }
+    }
   }
-  place(geo, balls, cue, ...cueSpot(geo))
+  place(geo, balls, ball, x0, y)
+}
+
+export const poolBreakCount = (state) => (state.breakCrossed?.length || 0) + state.potted.length
+
+export function canNominateColor(state, n) {
+  return state.mode === 'snk' && !state.sn.onRed && !state.sn.decider &&
+    (state.sn.finalColor || redsOnTable(state) > 0) &&
+    state.balls.some((ball) => ball.on && ball.n === n && n >= 16)
+}
+
+export function acceptLineBallInHand(state) {
+  state.inHand = true
+  state.inHandLine = true
+  const line = state.geo.W / 4
+  const targets = state.balls.filter((b) => b.on && b.n !== 0 && b.n !== 8)
+  if (targets.length && targets.every((b) => b.x < line)) {
+    const nearest = targets.reduce((best, b) => b.x > best.x ? b : best)
+    spotPoolBall(state, nearest.n)
+  }
+  placeCue(state)
 }
 
 function finish(state, winner, why) {
@@ -52,50 +69,46 @@ function endPool(state) {
   let foul = ''
   let txt = ''
 
+  const firstHits = state.firstHits?.length ? state.firstHits
+    : state.firstHit === null ? [] : [state.firstHit]
+  const legalHits = firstHits.filter((n) => {
+    if (wasBreak) return true
+    if (state.canEight) return n === 8
+    return n !== 8 && (!group || isStripe(n) === group)
+  })
+  const pottedEight = state.potted.includes(8)
+
   if (state.cueIn) foul = '白球落袋'
-  else if (state.firstHit === null) foul = '未碰到任何球'
-  else if (group) {
-    if (
-      state.canEight
-        ? state.firstHit !== 8
-        : state.firstHit === 8 || isStripe(state.firstHit) !== group
-    )
-      foul = '首先碰到了错误的球'
-  } else if (state.firstHit === 8) foul = '首先碰到了8号球'
-
-  // 乔氏合法开球：目标球入袋按 2 球次计，台面上有 1/2 以上越过开球线
-  // 的目标球按 1 球次计，合计至少 4 球次。
-  let breakMiss = false
-  if (wasBreak && !foul) {
-    const pottedObjects = state.potted.filter((n) => n >= 1).length
-    const crossed = state.balls.filter(
-      (b) => b.on && b.n >= 1 && b.x <= geo.W / 4,
-    ).length
-    breakMiss = crossed + pottedObjects * 2 < 4
-  }
-
-  // 合法击球：主球碰目标球后，若没有目标球入袋，必须有球碰库。
-  if (!foul && !wasBreak && state.potted.length === 0 && !state.railAfterContact)
+  else if (state.offTable?.length) foul = '有球离开台面'
+  else if (!firstHits.length) foul = '未碰到任何球'
+  else if (!legalHits.length) foul = '首先碰到了错误的球'
+  else if (
+    state.shotStart?.inHandLine && !wasBreak && !state.cueCrossedLine &&
+    legalHits.every((n) => state.shotStart.balls.find((b) => b.n === n).x < geo.W / 4)
+  ) foul = '从开球线后直接击中了线后的球'
+  else if (!wasBreak && !state.potted.length && !state.railAfterContact)
     foul = '击球后无球碰库'
 
-  if (state.potted.includes(8)) {
-    if (wasBreak) {
-      place(
-        geo,
-        state.balls,
-        state.balls.find((b) => b.n === 8),
-        geo.W * 0.72,
-        geo.H / 2,
-      )
-      txt = '开球时8号球落袋,已摆回。'
-    } else {
-      finish(
-        state,
-        state.canEight && !foul ? me : op,
-        state.canEight && !foul ? '合法打进8号球' : '8号球违规落袋',
-      )
-      return
-    }
+  if (!wasBreak && state.offTable?.includes(8)) {
+    finish(state, op, '8号球离开台面')
+    return
+  }
+  if (!wasBreak && pottedEight) {
+    const won = state.canEight && !foul
+    finish(state, won ? me : op, won ? '合法打进8号球' : '8号球违规落袋')
+    return
+  }
+
+  const breakMiss = wasBreak && !foul && poolBreakCount(state) < 4
+  if (wasBreak && (pottedEight || state.offTable?.includes(8))) spotPoolBall(state, 8)
+  if (wasBreak && (foul || (pottedEight && !breakMiss))) {
+    const kind = foul ? (firstHits.length || state.cueIn || state.offTable?.length ? 'foul' : 'no-contact') : 'eight'
+    state.breakShot = false
+    state.turn = foul ? op : me
+    state.breakChoice = { seat: state.turn, offender: me, kind }
+    state.phase = 'choice'
+    state.message = foul ? `开球犯规:${foul}` : '开球打进8号球 · 选择复位续打或重开'
+    return
   }
 
   if (breakMiss) {
@@ -108,7 +121,7 @@ function endPool(state) {
     }
     state.breakShot = false
     state.turn = op
-    state.breakChoice = { seat: op, offender: me }
+    state.breakChoice = { seat: op, offender: me, kind: 'miss' }
     state.phase = 'choice'
     state.message = `开球失机(累计${misses[me]}次) · ${playerLabel(
       state,
@@ -118,7 +131,7 @@ function endPool(state) {
   }
 
   if (!group && !foul && !wasBreak) {
-    const first = state.potted.find((n) => n !== 8)
+    const first = legalHits.find((n) => state.potted.some((p) => isStripe(p) === isStripe(n)))
     if (first) {
       state.grp[me] = isStripe(first)
       state.grp[op] = state.grp[me] === 'solid' ? 'stripe' : 'solid'
@@ -129,29 +142,15 @@ function endPool(state) {
   }
 
   const own = state.grp[me]
-  const pottedEight = state.potted.includes(8)
-  const continues =
-    !foul &&
-    (wasBreak
-      ? pottedEight || state.potted.some((n) => n !== 8)
-      : own && state.potted.some((n) => n !== 8 && isStripe(n) === own))
+  const continues = !foul && (wasBreak ? state.potted.length > 0
+    : own && state.potted.some((n) => n !== 8 && isStripe(n) === own))
 
-  // 开球犯规后白球只能放在开球线后，先摆回开球区。
-  if (state.cueIn || (foul && wasBreak)) {
-    if (foul && wasBreak) placeCueInLine(geo, state.balls)
-    else place(geo, state.balls, state.balls[0], ...cueSpot(geo))
-  }
   state.breakShot = false
-
   if (foul) {
     state.turn = op
     state.inHand = true
-    state.inHandLine = wasBreak
-    txt += `犯规:${foul}。${playerLabel(state, op)}${
-      wasBreak
-        ? '线后自由球(只能放在开球线后)'
-        : '自由球(俯视下可拖动白球)'
-    }`
+    if (state.cueIn || state.offTable?.includes(0)) placeCue(state)
+    txt += `犯规:${foul}。${playerLabel(state, op)}自由球(俯视下可拖动白球)`
   } else if (continues) {
     txt += wasBreak
       ? '开球进球,继续击球(此时不定花色,之后进球才定)'
@@ -163,59 +162,28 @@ function endPool(state) {
   state.message = txt
 }
 
-// 平分决胜：黑球复位到黑球点，白球放回 D 区，随机一方先手。
+// 同分时复位黑球，抽签决定谁选先后手。
 function startBlackOff(state) {
   const { geo } = state
   const black = state.balls.find((b) => b.n === 21)
   black.on = true
   place(geo, state.balls, black, ...colorSpot(geo, 21))
-  const cue = state.balls[0]
-  cue.on = true
-  place(geo, state.balls, cue, ...cueSpot(geo))
+  placeCue(state)
   state.turn = Math.random() < 0.5 ? 0 : 1
   state.inHand = true
   state.breakShot = false
   state.sn.decider = true
+  state.sn.onRed = false
+  state.sn.idx = 5
   state.sn.finalColor = false
   state.sn.freeBall = null
-  state.sn.choice = null
+  state.sn.choice = { kind: 'black', seat: state.turn, offender: 1 - state.turn }
   state.sn.missStreak = { seat: null, count: 0 }
-  state.phase = 'aim'
-  state.message = `平分,黑球复位,${playerLabel(
+  state.phase = 'choice'
+  state.message = `平分，黑球复位，${playerLabel(
     state,
     state.turn,
-  )}先打黑球决胜`
-}
-
-function endBlackOff(state) {
-  const me = state.turn
-  const op = 1 - me
-  const first = state.firstHit
-  const pottedBlack = state.potted.includes(21)
-  const foul = state.cueIn || first === null || first !== 21
-  const why = state.cueIn
-    ? '白球落袋'
-    : first === null
-      ? '未击中黑球'
-      : '先碰了错误的球'
-
-  if (!foul && pottedBlack) {
-    state.sn.score[me] += 7
-    finish(state, me, '黑球决胜')
-    return
-  }
-  if (foul) {
-    state.sn.score[op] += 7
-    finish(state, op, `黑球决胜犯规:${why}`)
-    return
-  }
-
-  // 合法但没进：交换击球权，黑球留在台面。
-  state.turn = op
-  state.sn.freeBall = null
-  state.sn.choice = null
-  state.phase = 'aim'
-  state.message = `未进黑球,轮到${playerLabel(state, op)} · 黑球决胜`
+  )}选择抢黑先后手`
 }
 
 function snookerTarget(state) {
@@ -226,7 +194,7 @@ function snookerTarget(state) {
       : state.sn.finalColor
         ? '任意彩球'
         : `${colorName(16 + state.sn.idx)}球`
-    return `${on}或${colorName(state.sn.freeBall)}球(自由球)`
+    return `${colorName(state.sn.freeBall)}球(自由球，代${on})`
   }
   if (redsOnTable(state) > 0)
     return state.sn.onRed ? '红球' : '任意彩球'
@@ -234,53 +202,113 @@ function snookerTarget(state) {
   return ('黄绿棕蓝粉黑'[state.sn.idx] || '黑') + '球'
 }
 
-// 目标球的两侧边缘是否都能被白球直线打到。
-function edgesClear(geo, balls, cue, target) {
-  const dx = target.x - cue.x
-  const dy = target.y - cue.y
-  const distance = Math.hypot(dx, dy)
-  if (distance <= 2 * geo.R) return true
-  const px = -dy / distance
-  const py = dx / distance
-  for (const sign of [1, -1]) {
-    const ex = target.x + sign * px * geo.R
-    const ey = target.y + sign * py * geo.R
-    const vx = ex - cue.x
-    const vy = ey - cue.y
-    const length = Math.hypot(vx, vy)
-    if (length < 1e-6) continue
-    const hit = castRay(
-      geo,
-      balls,
-      cue.x,
-      cue.y,
-      vx / length,
-      vy / length,
-      target.n,
-    )
-    if (hit.ball && hit.t < length - 0.5) return false
+// 检查母球中心到与目标球接触的位置，排除终点以外的遮挡。
+function pathClear(cue, blockers, angle, length, diameter) {
+  const dx = Math.cos(angle)
+  const dy = Math.sin(angle)
+  return blockers.every((ball) => {
+    const x = ball.x - cue.x
+    const y = ball.y - cue.y
+    const projection = Math.max(0, Math.min(length, x * dx + y * dy))
+    return Math.hypot(x - projection * dx, y - projection * dy) >= diameter - 0.01
+  })
+}
+
+function edgesClear(cue, target, blockers, diameter) {
+  const x = target.x - cue.x
+  const y = target.y - cue.y
+  const distance = Math.hypot(x, y)
+  if (distance <= diameter + 0.01) return true
+  const angle = Math.atan2(y, x)
+  const half = Math.asin(diameter / distance)
+  const length = Math.sqrt(distance ** 2 - diameter ** 2)
+  return pathClear(cue, blockers, angle - half, length, diameter) &&
+    pathClear(cue, blockers, angle + half, length, diameter)
+}
+
+export function isSnookered(state, targets, blocker = null) {
+  if (!targets.length) return false
+  const { geo, balls } = state
+  const candidates = new Set(targets.map((ball) => ball.n))
+  const blockers = balls.filter((ball) => ball.on && ball.n && !candidates.has(ball.n))
+  const clear = (cue, obstacles = blockers) => targets.some((target) =>
+    edgesClear(cue, target, obstacles, 2 * geo.R),
+  )
+  if (blocker !== null) {
+    const cue = balls[0]
+    return !clear(cue) && clear(cue, blockers.filter((ball) => ball.n !== blocker))
+  }
+  if (!state.inHand) return !clear(balls[0])
+
+  // 手中球须在整个 D 区都找不到直线球路，现有摆位只是其中之一。
+  if (clear(balls[0])) return false
+  const y0 = geo.H / 2
+  const spacing = geo.R / 4
+  for (let r = 0; r <= DR; r = Math.min(r + spacing, DR)) {
+    const slices = Math.max(1, Math.ceil(Math.PI * r / spacing))
+    for (let i = 0; i <= slices; i++) {
+      const angle = Math.PI * (0.5 + i / slices)
+      const cue = { x: BX + r * Math.cos(angle), y: y0 + r * Math.sin(angle) }
+      if (free(geo, balls, cue.x, cue.y, balls[0]) && clear(cue)) return false
+    }
+    if (r === DR) break
   }
   return true
 }
 
-// 白球被完全阻挡：没有任何一颗目标球的两侧边缘都能被直线击中。
-export function isSnookered(state, targets) {
-  const cue = state.balls[0]
-  return !targets.some((target) =>
-    edgesClear(state.geo, state.balls, cue, target),
-  )
+function spotSnookerColors(state, colors) {
+  const { geo, balls } = state
+  const spots = COLOR_VALUES.map((_, i) => colorSpot(geo, i + 16)).reverse()
+  for (const n of colors.sort((a, b) => b - a)) {
+    const ball = balls.find((b) => b.n === n)
+    const own = colorSpot(geo, n)
+    const point = [own, ...spots].find(([x, y]) => free(geo, balls, x, y, ball))
+    if (point) {
+      place(geo, balls, ball, ...point)
+      continue
+    }
+    const directions = n >= 20 ? [1, -1] : [1]
+    let spotted = false
+    for (const direction of directions) {
+      for (let x = own[0]; x >= geo.R && x <= geo.W - geo.R; x += direction) {
+        if (!free(geo, balls, x, own[1], ball)) continue
+        place(geo, balls, ball, x, own[1])
+        spotted = true
+        break
+      }
+      if (spotted) break
+    }
+    if (!spotted) place(geo, balls, ball, ...own)
+  }
 }
 
-// 台面剩余最多能拿到的分数：每颗红球按“红+黑”8 分算，彩球满分 27；
-// 红球清完后按台面剩余彩球计分；最后一颗红球后的彩球可再拿一次最高 7 分。
+function pointsRemaining(balls, sn) {
+  const reds = balls.filter((ball) => ball.on && ball.n >= 1 && ball.n <= 15).length
+  const colors = balls.filter((ball) => ball.on && ball.n >= 16)
+  const highest = Math.max(0, ...colors.map((ball) => colorValue(ball.n)))
+  const clearance = colors.reduce((sum, ball) => sum + colorValue(ball.n), 0)
+  const extra = sn.freeBall ? sn.onRed ? 1 + highest : colorValue(16 + sn.idx) : 0
+  return reds * (1 + highest) + clearance + (!sn.onRed && (reds || sn.finalColor) ? highest : 0) + extra
+}
+
 export function snookerPointsRemaining(state) {
-  const reds = redsOnTable(state)
-  if (reds > 0) return reds * 8 + 27
-  let sum = 0
-  for (const ball of state.balls)
-    if (ball.on && ball.n >= 16) sum += colorValue(ball.n)
-  if (state.sn.finalColor) sum += 7
-  return sum
+  return pointsRemaining(state.balls, state.sn)
+}
+
+function canHitFullBall(state, targets) {
+  const balls = state.shotStart?.balls
+  if (!balls) return false
+  const cue = balls[0]
+  const diameter = 2 * state.geo.R
+  return targets.some((ball) => {
+    const distance = Math.hypot(ball.x - cue.x, ball.y - cue.y)
+    if (distance <= diameter + 0.05) return true
+    const blockers = balls.filter((other) => other.on && other.n &&
+      other.n !== ball.n && (ball.n > 15 || other.n > 15))
+    if (ball.n <= 15) return edgesClear(cue, ball, blockers, diameter)
+    return pathClear(cue, blockers, Math.atan2(ball.y - cue.y, ball.x - cue.x),
+      distance - diameter, diameter)
+  })
 }
 
 export function concedeFrame(state, seat) {
@@ -290,12 +318,27 @@ export function concedeFrame(state, seat) {
   return state
 }
 
+export function offerConcession(state, seat) {
+  state.sn.choice = { kind: 'concede', seat: 1 - seat, offender: seat }
+  state.phase = 'choice'
+  state.message = `${playerLabel(state, seat)}提出认输`
+}
+
 export function resolveSnookerChoice(state, decision, freeBall = null) {
   const choice = state.sn && state.sn.choice
   if (!choice) return state
+  if (choice.kind === 'black' || choice.kind === 'concede') {
+    state.sn.choice = null
+    if (choice.kind === 'concede' && decision === 'play') return concedeFrame(state, choice.offender)
+    state.turn = decision === 'again' ? choice.offender : choice.seat
+    if (choice.kind === 'black') state.sn.blackOpener = state.turn
+    state.phase = 'aim'
+    state.message = `${playerLabel(state, state.turn)}继续击球 · 目标:${snookerTarget(state)}`
+    return state
+  }
   const snapshot = choice.snapshot
   state.sn.freeBall = null
-  if (decision === 'replay' && snapshot) {
+  if (decision === 'replay' && choice.miss && snapshot) {
     for (const saved of snapshot.balls) {
       const ball = state.balls.find((b) => b.n === saved.n)
       if (!ball) continue
@@ -322,7 +365,7 @@ export function resolveSnookerChoice(state, decision, freeBall = null) {
     state.message = `${playerLabel(
       state,
       state.turn,
-    )}重打 · 球位已恢复 · 目标:${snookerTarget(state)}`
+    )}重打 · 球位已恢复 · 目标:${snookerTarget(state)}${choice.warn ? ' · 再次未击中将判负' : ''}`
   } else if (decision === 'again') {
     // 让犯规方从球停下的位置重打；foul and a miss 的重打序列随之结束。
     state.turn = choice.offender
@@ -356,150 +399,111 @@ export function resolveSnookerChoice(state, decision, freeBall = null) {
 }
 
 function endSnooker(state) {
-  if (state.sn.decider) {
-    endBlackOff(state)
-    return
-  }
   const { geo } = state
   const me = state.turn
   const op = 1 - me
   state.breakShot = false
   const freeBall = state.sn.freeBall
-  state.sn.freeBall = null
-  const pottedReds = state.potted.filter((n) => n <= 15).length
-  const redsAtStart = redsOnTable(state) + pottedReds > 0
+  const potted = state.potted
+  const offTable = state.offTable || []
+  const cueOff = state.cueIn || offTable.includes(0)
+  const redsAtStart = redsOnTable(state) +
+    [...potted, ...offTable].filter((n) => n >= 1 && n <= 15).length > 0
   const finalColor = !!state.sn.finalColor
-  const nextColor = 16 + state.sn.idx
-  const first = state.firstHit
-  const freeActive = freeBall !== null
+  const nextColor = state.sn.decider ? 21 : 16 + state.sn.idx
+  const redOn = redsAtStart && state.sn.onRed
+  const chooseColor = !redOn && (redsAtStart || finalColor)
+  const firstHits = state.firstHits?.length ? state.firstHits
+    : state.firstHit === null ? [] : [state.firstHit]
+  // 未传提名的旧客户端仍可按首碰彩球判定。
+  const nominated = chooseColor
+    ? state.nominatedColor ?? firstHits.find((n) => n >= 16) ?? null
+    : null
+  const isBallOn = (n) => redOn ? n > 0 && n <= 15 : n === (chooseColor ? nominated : nextColor)
+  const ballOnValue = redOn ? 1 : chooseColor ? colorValue(nominated) || 4 : colorValue(nextColor)
+  const startingBalls = state.shotStart?.balls || state.balls
+  const cueAtStart = startingBalls[0]
+  const touching = startingBalls.filter((b) => b.on && b.n &&
+    Math.hypot(b.x - cueAtStart.x, b.y - cueAtStart.y) <= 2 * geo.R + 0.05)
+  const direction = (ball) => Math.cos(state.shotAngle) * (ball.x - cueAtStart.x) +
+    Math.sin(state.shotAngle) * (ball.y - cueAtStart.y)
+  const push = touching.find((ball) => firstHits.includes(ball.n) && direction(ball) > 0)
+  const playedAway = !freeBall && touching.some((ball) => isBallOn(ball.n) && direction(ball) <= 0)
+  const contactedOn = playedAway || (freeBall ? firstHits.includes(freeBall) : firstHits.some(isBallOn))
+  const legalContact = playedAway || (contactedOn && firstHits.every((n) => n === freeBall || isBallOn(n)))
+  let why = push ? '推杆'
+    : state.cueIn ? '白球落袋'
+    : offTable.length ? '有球离开台面'
+    : !legalContact ? firstHits.length ? '先碰了错误的球' : '未击中任何球'
+    : ''
+  let foulValue = Math.max(4, ballOnValue, push ? colorValue(push.n) : 0)
+  for (const n of offTable) foulValue = Math.max(foulValue, colorValue(n) || 0)
+  if (!legalContact)
+    for (const n of firstHits)
+      foulValue = Math.max(foulValue, n === freeBall ? ballOnValue : colorValue(n))
 
-  let foul = state.cueIn || first === null
-  let why = state.cueIn
-    ? '白球落袋'
-    : first === null
-      ? '未击中任何球'
-      : ''
   let points = 0
-  let txt = ''
-  let legalFirst = true
-
-  // 犯规罚分：球在值、先碰球、落袋球三者取最大，最低 4 分。
-  const ballOnValue = redsAtStart
-    ? state.sn.onRed
-      ? 1
-      : 4
-    : finalColor
-      ? 4
-      : colorValue(nextColor)
-  let foulValue = Math.max(4, ballOnValue)
-
-  if (first !== null) {
-    legalFirst = freeActive
-      ? first === freeBall
-      : redsAtStart
-        ? state.sn.onRed
-          ? first <= 15
-          : first >= 16
-        : finalColor
-          ? first >= 16
-          : first === nextColor
-    if (!legalFirst) {
-      foul = true
-      foulValue = Math.max(foulValue, colorValue(first))
-      why = '先碰了错误的球'
-    }
-  }
-  const isMiss = first === null || !legalFirst
-
-  // 自由球按“目标球”计值：红球 1 分；按顺序打彩球时按当前彩球分值。
-  const freeValue = (n) =>
-    state.sn.onRed
-      ? 1
-      : state.sn.finalColor
-        ? colorValue(n)
-        : colorValue(nextColor)
-  // 彩球阶段若同时打进自由球和真正的目标球，只有目标球计分。
-  const freeBallAlsoBallOn =
-    freeActive &&
-    !state.sn.onRed &&
-    state.potted.some(
-      (n) =>
-        n !== freeBall && (state.sn.finalColor || n === nextColor),
-    )
-
-  for (const n of state.potted) {
-    const isFree = freeActive && n === freeBall
-    const legal = redsAtStart
-      ? state.sn.onRed
-        ? n <= 15 || isFree
-        : n >= 16 && (freeActive || n === first)
-      : finalColor
-        ? n >= 16 && (freeActive || n === first)
-        : n === nextColor || isFree
-    if (legal) {
-      if (!isFree) points += colorValue(n)
-      else if (!freeBallAlsoBallOn) points += freeValue(n)
+  const trueBallPotted = potted.some(isBallOn)
+  for (const n of potted) {
+    if (isBallOn(n)) points += colorValue(n)
+    else if (n === freeBall) {
+      if (redOn || !trueBallPotted) points += ballOnValue
     } else {
-      foul = true
-      foulValue = Math.max(foulValue, isFree ? freeValue(n) : colorValue(n))
-      why = why || '打进了错误的球'
+      why ||= '打进了错误的球'
+      foulValue = Math.max(foulValue, colorValue(n))
     }
   }
 
-  // 彩球复位：红球阶段、最后一颗红球后的那颗彩球、犯规打进的彩球，
-  // 以及被指定为自由球的彩球（自由球永远复位）。
-  for (const n of state.potted)
-    if (
-      n >= 16 &&
-      (redsAtStart || finalColor || foul || (freeActive && n === freeBall))
-    )
-      place(geo, state.balls, state.balls.find((b) => b.n === n), ...colorSpot(geo, n))
-  if (state.cueIn) place(geo, state.balls, state.balls[0], ...cueSpot(geo))
+  if (!why && !points && freeBall &&
+      state.balls.filter((ball) => ball.on && ball.n).length > 2 &&
+      isSnookered(state, state.balls.filter((ball) => ball.on && isBallOn(ball.n)), freeBall))
+    why = '用指定自由球给对手做斯诺克'
+
+  const foul = !!why
+  const onlyBlack = !redOn && !chooseColor &&
+    startingBalls.filter((ball) => ball.on && ball.n).every((ball) => ball.n === 21)
+  state.sn.freeBall = null
+  spotSnookerColors(state, [...potted, ...offTable].filter((n) => n >= 16 &&
+    (redsAtStart || finalColor || foul || n === freeBall)))
+  if (cueOff) placeCue(state)
+  let txt = ''
 
   if (foul) {
+    const streak = state.sn.missStreak || { seat: null, count: 0 }
+    const continuing = streak.seat === me && streak.count > 0
+    const startTargets = startingBalls.filter((b) => b.on && b.n && (
+      freeBall ? b.n === freeBall : chooseColor ? b.n >= 16 : isBallOn(b.n)
+    ))
+    const fullBall = canHitFullBall(state, startTargets)
+    const maxBefore = pointsRemaining(startingBalls, { ...state.sn, freeBall })
+    const differenceBefore = Math.abs(state.sn.score[0] - state.sn.score[1])
+
     state.sn.score[op] += foulValue
     state.turn = op
-    state.inHand = state.cueIn
-    if (redsOnTable(state) > 0) {
-      state.sn.onRed = true
-      state.sn.finalColor = false
-    } else {
-      state.sn.onRed = false
-      if (redsAtStart) {
-        // 最后一颗红球本杆离台：下一位任选一颗彩球。
-        state.sn.idx = 0
-        state.sn.finalColor = true
-      } else if (finalColor) {
-        // 最后一颗红球后的彩球阶段犯规：从黄球重新开始。
-        state.sn.idx = 0
-        state.sn.finalColor = false
-      }
+    state.inHand = cueOff
+    state.sn.onRed = redsOnTable(state) > 0
+    state.sn.finalColor = false
+    if (redsAtStart || finalColor) state.sn.idx = 0
+
+    const differenceAfter = Math.abs(state.sn.score[0] - state.sn.score[1])
+    const targets = state.balls.filter((b) => b.on && b.n && (
+      state.sn.onRed ? b.n <= 15 : b.n === 16 + state.sn.idx
+    ))
+    const freeAward = isSnookered(state, targets)
+    const maxAfter = snookerPointsRemaining(state) + (freeAward
+      ? state.sn.onRed ? 8 : colorValue(16 + state.sn.idx)
+      : 0)
+    const needsPenalties = differenceBefore > maxBefore || differenceAfter > maxAfter
+    // 无人工裁判，需罚分后只延续已经开始的满球复位序列。
+    const isMiss = !onlyBlack && !contactedOn && (continuing || !needsPenalties)
+    const count = isMiss && fullBall ? (continuing ? streak.count + 1 : 1) : 0
+    state.sn.missStreak = count ? { seat: me, count } : { seat: null, count: 0 }
+    if (count >= 3) {
+      state.sn.choice = null
+      finish(state, op, '三次未击中目标球判负')
+      return
     }
-    // 只有在“未击中目标球”的重打序列里才判负：连续第三次未击中目标球。
-    let warn = false
-    if (isMiss) {
-      const streak = state.sn.missStreak || { seat: null, count: 0 }
-      const count = streak.seat === me ? streak.count + 1 : 1
-      state.sn.missStreak = { seat: me, count }
-      if (count >= 3) {
-        state.sn.choice = null
-        finish(state, op, '三次未击中目标球判负')
-        return
-      }
-      warn = count === 2
-    } else {
-      state.sn.missStreak = { seat: null, count: 0 }
-    }
-    // 犯规后白球被斯诺克即可申请自由球，打红球或彩球阶段都适用；
-    // 白球落袋属于手中球，不存在“被斯诺克”。
-    const colors = state.balls.filter((b) => b.on && b.n >= 16)
-    const targets = state.sn.onRed
-      ? state.balls.filter((b) => b.on && b.n >= 1 && b.n <= 15)
-      : state.sn.finalColor
-        ? colors
-        : state.balls.filter((b) => b.on && b.n === nextColor)
-    const freeAward =
-      !state.cueIn && targets.length > 0 && isSnookered(state, targets)
+    const warn = count === 2
     txt = `犯规:${why},${playerLabel(state, op)}得${foulValue}分`
     state.sn.choice = state.shotStart
       ? {
@@ -516,12 +520,12 @@ function endSnooker(state) {
       txt += isMiss
         ? ' · 可选择自己击球、让对手重打或回原位重打'
         : ' · 可选择自己击球或让对手重打'
-    if (warn) txt += ' · 警告:再次未击中目标球将判负'
+    if (warn) txt += ' · 若再回原位重打，未击中将判负'
     state.phase = state.sn.choice ? 'choice' : 'aim'
   } else {
     state.sn.missStreak = { seat: null, count: 0 }
     state.sn.score[me] += points
-    const pottedFree = freeActive && state.potted.includes(freeBall)
+    const pottedFree = potted.includes(freeBall)
     if (redsAtStart) {
       if (state.sn.onRed) {
         if (state.potted.some((n) => n <= 15) || pottedFree) {
@@ -552,8 +556,8 @@ function endSnooker(state) {
         txt = `未进球,轮到${playerLabel(state, op)}`
       }
     } else if (state.potted.includes(nextColor) || pottedFree) {
-      state.sn.idx++
-      if (state.sn.idx <= 5) txt = `进球+${points}分,继续击球`
+      if (!pottedFree || trueBallPotted) state.sn.idx++
+      txt = `进球+${points}分,继续击球`
     } else {
       state.turn = op
       txt = `未进球,轮到${playerLabel(state, op)}`
@@ -563,7 +567,7 @@ function endSnooker(state) {
   }
 
   // 只剩黑球时，第一次进球或犯规即结束本局；同分则黑球复位决胜。
-  if (foul && state.sn.idx >= 5) {
+  if (foul && onlyBlack) {
     const a = state.sn.score[0]
     const b = state.sn.score[1]
     if (a === b) {
@@ -585,10 +589,21 @@ function endSnooker(state) {
     return
   }
 
+  const live = state.balls.filter((ball) => ball.on && ball.n)
+  const [a, b] = state.sn.score
+  if (!state.sn.finalColor && live.length === 1 && live[0].n === 21 && Math.abs(a - b) > 7) {
+    state.sn.choice = null
+    finish(state, a > b ? 0 : 1, `只剩黑球，分差超过7分 (${a} : ${b})`)
+    return
+  }
   state.message = txt + ' · 目标:' + snookerTarget(state)
 }
 
 export function endShot(state) {
   if (state.mode === 'pool') endPool(state)
   else endSnooker(state)
+  state.quietShots = state.phase === 'aim' && !state.inHand &&
+    !state.potted.length && !state.offTable?.length
+    ? (state.quietShots ?? 0) + 1
+    : 0
 }

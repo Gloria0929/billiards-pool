@@ -1785,6 +1785,18 @@
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+.color-nomination {
+  font: inherit;
+  color: inherit;
+  background: #0d1712;
+  border: 1px solid #ffffff18;
+  border-radius: 9px;
+  padding: 6px 10px;
+}
+.color-nomination:focus-visible {
+  outline: 2px solid var(--ac);
+  outline-offset: 2px;
+}
 .viewbar-inline {
   position: static;
   transform: none;

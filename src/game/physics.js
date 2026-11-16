@@ -1,4 +1,5 @@
 import { DT, G, MUS, MUR, RAIL } from './constants.js'
+import { canPlace, cueSpot } from './geometry.js'
 
 const pushEvent = (state, kind, speed, x, y, id) => {
   if (state.events.length < 3000)
@@ -15,13 +16,24 @@ export function free(geo, balls, x, y, ex) {
   )
 }
 
-export function place(geo, balls, b, x, y) {
+export function canPlaceCue(state, x, y) {
+  const { geo, balls } = state
+  return Number.isFinite(x) && Number.isFinite(y) &&
+    canPlace(geo, state, x, y) && free(geo, balls, x, y, balls[0])
+}
+
+export function placeCue(state) {
+  const { geo, balls } = state
+  place(geo, balls, balls[0], ...cueSpot(geo), (x, y) => canPlace(geo, state, x, y))
+}
+
+export function place(geo, balls, b, x, y, allowed = () => true) {
   for (let k = 0; k < 500; k++) {
     const a = k * 2.4
     const r = k * 4
     const X = x + r * Math.cos(a)
     const Y = y + r * Math.sin(a)
-    if (free(geo, balls, X, Y, b)) {
+    if (allowed(X, Y) && free(geo, balls, X, Y, b)) {
       b.x = X
       b.y = Y
       break
@@ -34,7 +46,25 @@ export function place(geo, balls, b, x, y) {
   b.fallSpin = null
 }
 
-export function bounce(state, b, nx, ny) {
+function edgeDistance(b, a, c) {
+  const dx = c[0] - a[0]
+  const dy = c[1] - a[1]
+  const t = Math.max(0, Math.min(1,
+    ((b.x - a[0]) * dx + (b.y - a[1]) * dy) / (dx * dx + dy * dy),
+  ))
+  return [b.x - a[0] - dx * t, b.y - a[1] - dy * t]
+}
+
+export function frozenCushions(geo, balls) {
+  return Object.fromEntries(balls.filter((ball) => ball.on).map((ball) => [
+    ball.n,
+    geo.cushionEdges.flatMap(([a, c], i) =>
+      Math.hypot(...edgeDistance(ball, a, c)) <= geo.R + 0.05 ? [i] : [],
+    ),
+  ]))
+}
+
+export function bounce(state, b, nx, ny, counts = true) {
   const { R } = state.geo
   const vn = b.vx * nx + b.vy * ny
   if (vn >= 0) return
@@ -57,15 +87,21 @@ export function bounce(state, b, nx, ny) {
   b.wz -= k * c
   pushEvent(state, 'r', -vn, b.x, b.y, b.n)
   // 规则判定用的碰库记录：events 每帧会被音效消费清空，这里单独保留。
-  if (state.firstHit !== null) state.railAfterContact = true
+  if (counts && state.firstHit !== null) state.railAfterContact = true
   if (b.n >= 1 && Array.isArray(state.railBalls) && !state.railBalls.includes(b.n))
     state.railBalls.push(b.n)
 }
 
 function wall(state, b) {
   // Resolve against the same six cushion polygons used by the renderer.
-  for (const [a, c] of state.geo.cushionEdges) {
-    const { R } = state.geo
+  const { R, cushionEdges } = state.geo
+  const frozen = state.frozenRails?.[b.n]
+  if (frozen?.length) {
+    state.frozenRails[b.n] = frozen.filter((i) =>
+      Math.hypot(...edgeDistance(b, ...cushionEdges[i])) <= R + 0.05)
+  }
+  for (let i = 0; i < cushionEdges.length; i++) {
+    const [a, c] = cushionEdges[i]
     if (
       b.x < Math.min(a[0], c[0]) - R ||
       b.x > Math.max(a[0], c[0]) + R ||
@@ -73,24 +109,14 @@ function wall(state, b) {
       b.y > Math.max(a[1], c[1]) + R
     )
       continue
-    const dx = c[0] - a[0]
-    const dy = c[1] - a[1]
-    const l2 = dx * dx + dy * dy
-    const t = Math.max(
-      0,
-      Math.min(1, ((b.x - a[0]) * dx + (b.y - a[1]) * dy) / l2),
-    )
-    const x = a[0] + dx * t
-    const y = a[1] + dy * t
-    const px = b.x - x
-    const py = b.y - y
+    const [px, py] = edgeDistance(b, a, c)
     const d = Math.hypot(px, py)
     if (d < R && d > 1e-6) {
       const nx = px / d
       const ny = py / d
-      b.x = x + nx * (R + 0.001)
-      b.y = y + ny * (R + 0.001)
-      bounce(state, b, nx, ny)
+      b.x += nx * (R + 0.001 - d)
+      b.y += ny * (R + 0.001 - d)
+      bounce(state, b, nx, ny, !state.frozenRails?.[b.n]?.includes(i))
     }
   }
 }
@@ -143,6 +169,17 @@ export function step(state) {
     b.wz *= 1 - DT * 1.5
     wall(state, b)
   }
+  if (state.mode === 'pool') {
+    const line = W / 4
+    if (state.breakShot && state.breakCrossed) {
+      for (const b of balls)
+        if (b.n && b.on && b.x <= line && !state.breakCrossed.includes(b.n))
+          state.breakCrossed.push(b.n)
+    }
+    if (state.shotStart?.inHandLine && state.firstHit === null && balls[0].x >= line)
+      state.cueCrossedLine = true
+  }
+  const recordFirstContact = state.firstHit === null
   for (let i = 0; i < balls.length; i++) {
     const a = balls[i]
     if (!a.on) continue
@@ -166,7 +203,7 @@ export function step(state) {
         // 每颗球的微小质量差异（摆球时按 seed 生成）让碰撞链更不可预测。
         const ma = a.m || 1
         const mc = c.m || 1
-        const j2 = (1.95 * vn) / (1 / ma + 1 / mc)
+        const j2 = (1.98 * vn) / (1 / ma + 1 / mc)
         a.vx -= (j2 / ma) * nx
         a.vy -= (j2 / ma) * ny
         c.vx += (j2 / mc) * nx
@@ -187,9 +224,10 @@ export function step(state) {
             for (const o of [a, c]) o.wz += k * Ph
           }
         }
-        if (state.firstHit === null) {
-          if (a.n === 0) state.firstHit = c.n
-          else if (c.n === 0) state.firstHit = a.n
+        if (recordFirstContact && (a.n === 0 || c.n === 0)) {
+          const object = a.n === 0 ? c : a
+          if (state.firstHit === null) state.firstHit = object.n
+          state.firstHits?.push(object.n)
         }
       }
     }
@@ -204,23 +242,12 @@ export function step(state) {
         break
       }
     }
-    if (b.on) {
-      if (b.x < -RAIL + R) {
-        b.x = -RAIL + R
-        bounce(state, b, 1, 0)
-      }
-      if (b.x > W + RAIL - R) {
-        b.x = W + RAIL - R
-        bounce(state, b, -1, 0)
-      }
-      if (b.y < -RAIL + R) {
-        b.y = -RAIL + R
-        bounce(state, b, 0, 1)
-      }
-      if (b.y > H + RAIL - R) {
-        b.y = H + RAIL - R
-        bounce(state, b, 0, -1)
-      }
+    if (b.on && (b.x < -RAIL + R || b.x > W + RAIL - R ||
+                 b.y < -RAIL + R || b.y > H + RAIL - R)) {
+      b.on = false
+      b.vx = b.vy = b.wx = b.wy = b.wz = 0
+      b.st = 0
+      state.offTable?.push(b.n)
     }
   }
 }

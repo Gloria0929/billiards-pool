@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test",
     "preview": "vite preview",
     "server": "node server/index.js",
     "dev:all": "node scripts/dev-all.js",
+    "bench:break": "node scripts/break-bench.mjs",
     "start": "node server/index.js"
   },
   "dependencies": {

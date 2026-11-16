@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { AIM_NUDGE, AIM_NUDGE_FINE, COL, DT, MAX_SIM_STEPS, RAIL, SC, clamp } from './constants.js'
 import { getGeometry, toWorldX, toWorldZ } from './geometry.js'
-import { moving, step } from './physics.js'
+import { canPlaceCue, moving, step } from './physics.js'
 import { buildAimGuide } from './guide.js'
 import { launchShot } from './match.js'
 import * as audio from './audio.js'
@@ -34,6 +34,9 @@ export class BilliardsEngine {
     this.cameraReady = false
     this.showGuide = true
     this.power = 0.45
+    // 本方玩家自己的力度。电脑 / 联机对手的瞄准只改 power（用于显示），
+    // 不能覆盖它，否则轮到本方时力度会被对手的数值顶掉。
+    this.playerPower = 0.45
     this.spin = { x: 0, y: 0 }
     this.angle = 0
     this.strikeT = 0
@@ -589,6 +592,7 @@ export class BilliardsEngine {
     this.animating = false
     this.acc = 0
     this.power = 0.45
+    this.playerPower = 0.45
     this.spin = { x: 0, y: 0 }
     this.angle = 0
     this.orbitZoom = 1
@@ -1141,7 +1145,7 @@ export class BilliardsEngine {
     if (this.drag && this.state.phase === 'aim') {
       const p = this.pointToTable(e)
       const cue = this.state.balls[0]
-      if (p && this.state.inHand && this.geo && this.canPlaceCue(p, cue)) {
+      if (p && this.state.inHand && this.geo && this.canPlaceCue(p)) {
         cue.x = p.x
         cue.y = p.y
       }
@@ -1164,17 +1168,8 @@ export class BilliardsEngine {
     this.lastY = e.clientY
   }
 
-  canPlaceCue(p, cue) {
-    const { R, W, H, PR } = this.geo
-    if (this.state.mode === 'snk') {
-      if (p.x > 737 || Math.hypot(p.x - 737, p.y - H / 2) > 292) return false
-    } else if ((this.state.breakShot || this.state.inHandLine) && p.x > W / 4) return false
-    if (p.x < R || p.x > W - R || p.y < R || p.y > H - R) return false
-    if (PR.some((q) => Math.hypot(p.x - q[0], p.y - q[1]) < q[2] * 0.85 + R * 0.2))
-      return false
-    return this.state.balls.every(
-      (b) => b === cue || !b.on || Math.hypot(b.x - p.x, b.y - p.y) >= 2 * R + 0.5,
-    )
+  canPlaceCue(p) {
+    return canPlaceCue(this.state, p.x, p.y)
   }
 
   onPointerUp(e) {
@@ -1204,8 +1199,10 @@ export class BilliardsEngine {
     this.onPower?.(this.power)
   }
 
-  setPower(value) {
+  // own=false 用于电脑 / 联机对手：只更新显示用的力度，不覆盖本方玩家的设置。
+  setPower(value, own = true) {
     this.power = clamp(value, 0.01, 1)
+    if (own) this.playerPower = this.power
     this.emitPower()
   }
 
@@ -1321,6 +1318,7 @@ export class BilliardsEngine {
       power: this.power,
       spin: { x: this.spin.x, y: this.spin.y },
       cue: { x: this.state.balls[0].x, y: this.state.balls[0].y },
+      nominatedColor: this.nominatedColor ?? null,
     }
     this.pendingShot = shot
     this.striking = true
@@ -1350,6 +1348,9 @@ export class BilliardsEngine {
     if (!enabled && this.interactionEnabled) {
       this.endPull(null, true)
       this.cancelSpace(true)
+    } else if (enabled && !this.interactionEnabled) {
+      // 回到本方回合：恢复本方自己的力度，而不是对手 / 电脑留下的数值。
+      this.setPower(this.playerPower)
     }
     this.interactionEnabled = enabled
   }

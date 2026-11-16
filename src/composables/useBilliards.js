@@ -1,7 +1,7 @@
 import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { BilliardsEngine } from '../game/engine.js'
-import { createMatch, hydrateState, resolveBreakChoice as applyBreakChoice, snapshot } from '../game/match.js'
-import { concedeFrame, endShot, resolveSnookerChoice, snookerPointsRemaining } from '../game/rules.js'
+import { createMatch, hydrateState, offerStalemate, resolveBreakChoice as applyBreakChoice, resolveFrameChoice, snapshot } from '../game/match.js'
+import { canNominateColor, concedeFrame, endShot, snookerPointsRemaining } from '../game/rules.js'
 import { MODES } from '../game/constants.js'
 import {
   advanceSeries,
@@ -49,6 +49,8 @@ export function useBilliards() {
     snookerOnRed: true,
     snookerColorIndex: 0,
     snookerFinalColor: false,
+    nominatedColor: null,
+    canNominate: false,
     names: null,
     balls: [],
     message: '',
@@ -63,6 +65,7 @@ export function useBilliards() {
     match: publicSeries(createSeries(1)),
     canShoot: false,
     canConcede: false,
+    canRequestStalemate: false,
     modeLabel: '中式八球 · 本地双人',
     menu: {
       visible: true,
@@ -202,12 +205,14 @@ export function useBilliards() {
       ui.online.status === 'idle' &&
       state.phase === 'aim' &&
       state.turn === 1
-    ui.canShoot =
-      state.phase === 'aim' &&
-      !ui.menu.visible &&
-      myTurn &&
-      !ui.online.waiting &&
-      !aiTurn
+    const canPlay = state.phase === 'aim' && !ui.menu.visible &&
+      myTurn && !ui.online.waiting && !aiTurn
+    if (!canNominateColor(state, ui.nominatedColor)) ui.nominatedColor = null
+    ui.canNominate = canPlay && state.balls.some((ball) => canNominateColor(state, ball.n))
+    ui.canShoot = canPlay && (!ui.canNominate || ui.nominatedColor !== null)
+    ui.canRequestStalemate = canPlay && !state.breakShot && !engine?.striking &&
+      (onlinePlaying || state.quietShots >= 6)
+    if (engine) engine.nominatedColor = ui.nominatedColor
     const playerSeat = onlinePlaying ? ui.online.seat : 0
     ui.canConcede =
       state.mode === 'snk' &&
@@ -271,6 +276,14 @@ export function useBilliards() {
     ui.selectedMode = mode
   }
 
+  // 本方开球时默认满力：开球是独立的一杆，不该继承电脑 / 对手留下的力度。
+  function primeBreakPower() {
+    if (!state || !engine) return
+    const mySeat = ui.online.status === 'playing' ? ui.online.seat : 0
+    if (state.phase === 'aim' && state.breakShot && state.turn === mySeat)
+      engine.setPower(1)
+  }
+
   function startLocal() {
     if (ui.online.status !== 'idle') leaveRoom(true)
     localSeries = createSeries(ui.bestOf)
@@ -284,10 +297,11 @@ export function useBilliards() {
     state = createMatch(ui.selectedMode, seed, ['你', '电脑'])
     state.breakMisses = [...localSeries.breakMisses]
     if (localSeries.frame % 2 === 0) {
-      state.turn = 1
+      state.turn = state.opener = 1
       state.message = '电脑 开球 · 等待电脑击球'
     }
     engine.loadMatch(state)
+    primeBreakPower()
     audio.restoreMaster()
     closeMenu()
     syncUi()
@@ -378,7 +392,7 @@ export function useBilliards() {
     if (!aiTurnReady()) return
     const shot = chooseAiShot(state, 1, ui.aiDifficulty)
     engine.angle = shot.angle
-    engine.setPower(shot.power)
+    engine.setPower(shot.power, false)
     engine.setSpin(shot.spin)
     aiTimer = setTimeout(() => {
       aiTimer = null
@@ -398,12 +412,11 @@ export function useBilliards() {
         : choice.seat === 0
     showMenu(
       'break-choice',
-      '开球失机。',
-      mine
-        ? '开球未达到四球次过线。你可以接受当前台面继续击球，或让任意一方重新开球。'
-        : '等待对手选择：接受当前台面，或重新开球。',
+      state.message,
+      mine ? '' : '等待对手选择。',
     )
     ui.menu.mine = mine
+    ui.menu.breakKind = choice.kind
     ui.menu.offender = choice.offender
     ui.menu.seat = choice.seat
   }
@@ -426,13 +439,16 @@ export function useBilliards() {
     }
     const seat = rerack
       ? target === 'self'
-        ? 0
+        ? choice.seat
         : choice.offender
       : null
     applyBreakChoice(state, rerack ? 'rerack' : 'accept', seat)
     if (state.mode === 'pool') localSeries.breakMisses = [...state.breakMisses]
     closeMenu()
-    if (rerack) engine?.loadMatch(state)
+    if (rerack) {
+      engine?.loadMatch(state)
+      primeBreakPower()
+    } else engine?.applyState(state)
     syncUi()
     maybeScheduleAi()
   }
@@ -446,7 +462,10 @@ export function useBilliards() {
         state?.phase === 'choice' &&
         state.breakChoice?.seat === 1
       )
-        resolveBreakChoiceAction('accept')
+        resolveBreakChoiceAction(
+          state.breakChoice.kind === 'no-contact' ? 'rerack' : 'accept',
+          'self',
+        )
     }, 900)
   }
 
@@ -476,8 +495,8 @@ export function useBilliards() {
         : choice.seat === 0
     showMenu(
       'foul-choice',
-      '犯规判罚。',
-      mine
+      choice.kind ? state.message : '犯规判罚。',
+      choice.kind ? (mine ? '' : '等待对手选择。') : mine
         ? `罚分已计入。你可以自己击球、让对手从球停下的位置重打${
             choice.miss ? '，或让他回到犯规前的球位重打' : ''
           }。${
@@ -486,7 +505,7 @@ export function useBilliards() {
               : ''
           }${
             choice.warn
-              ? ' 警告：对手再次未击中目标球将判负本局。'
+              ? ' 若再次要求回原位重打，对手未击中目标球将判负。'
               : ''
           }`
         : `等待对手选择：自己击球、让你从当前位置重打${
@@ -494,6 +513,7 @@ export function useBilliards() {
           }。`,
     )
     ui.menu.mine = mine
+    ui.menu.choiceKind = choice.kind
     ui.menu.miss = !!choice.miss
     ui.menu.warn = !!choice.warn
     ui.menu.freeBall = !!choice.freeBall
@@ -548,7 +568,7 @@ export function useBilliards() {
       showMenu(
         'free-ball',
         '自由球。',
-        '白球被完全挡住。你可以选一颗彩球当作红球，也可以不用自由球。',
+        '你可以选另一颗彩球代替当前目标球，也可以按原目标击球。',
       )
     } else resolveFoulChoice('play')
   }
@@ -562,10 +582,27 @@ export function useBilliards() {
       syncUi()
       return
     }
-    resolveSnookerChoice(state, decision, freeBall)
+    state = resolveFrameChoice(state, decision, freeBall)
     closeMenu()
+    engine?.applyState(state)
     syncUi()
-    maybeScheduleAi()
+    if (state.phase === 'over') openOverlayForResult()
+    else maybeScheduleAi()
+  }
+
+  function requestStalemate() {
+    if (!ui.canRequestStalemate || engine?.striking) return
+    if (ui.online.status === 'playing') {
+      if (!net.send({ type: 'stalemate' })) return
+      ui.online.waiting = true
+    } else {
+      offerStalemate(state)
+      state = resolveFrameChoice(state, 'play')
+      engine?.applyState(state)
+      primeBreakPower()
+      maybeScheduleAi()
+    }
+    syncUi()
   }
 
   /* ---------- 斯诺克认输 ---------- */
@@ -574,7 +611,7 @@ export function useBilliards() {
     showMenu(
       'concede',
       '确认认输？',
-      '台面剩余分数已经不足以追平，认输后本局结束。',
+      '台面剩余分数已经不足以追平。',
     )
   }
 
@@ -661,6 +698,7 @@ export function useBilliards() {
 
   /* ---------- 引擎事件 ---------- */
   function handleShoot(shot) {
+    ui.nominatedColor = null
     if (ui.online.status === 'playing') {
       const sent = net.send({ type: 'shot', shot })
       if (!sent) return
@@ -710,6 +748,7 @@ export function useBilliards() {
     ui.online.waiting = false
     pendingServer = null
     engine.applyState(state)
+    primeBreakPower()
     syncUi()
     if (state.phase === 'over' && ui.online.status === 'playing') openOverlayForResult()
     else {
@@ -981,6 +1020,7 @@ export function useBilliards() {
       }
       state = hydrateState(message.state)
       engine.loadMatch(state)
+      primeBreakPower()
       closeMenu()
       syncUi()
     })
@@ -1059,8 +1099,14 @@ export function useBilliards() {
     client.on('error', (message) => {
       ui.online.error = message.message || '联机服务出错了。'
       if (ui.online.status === 'connecting') ui.online.status = 'idle'
+      if (ui.online.status === 'playing' && !engine?.striking && !engine?.animating) {
+        ui.online.waiting = false
+        syncUi()
+      }
       if (ui.online.status === 'playing' && state?.phase === 'choice') {
-        openFoulChoice()
+        ui.online.waiting = false
+        if (state.breakChoice) openBreakChoice()
+        else openFoulChoice()
       }
     })
 
@@ -1107,6 +1153,12 @@ export function useBilliards() {
     engine?.setSpin(spin)
   }
 
+  function nominateColor(number) {
+    if (!ui.canNominate) return
+    ui.nominatedColor = canNominateColor(state, number) ? number : null
+    syncUi()
+  }
+
   function shoot() {
     engine?.shoot()
   }
@@ -1124,6 +1176,7 @@ export function useBilliards() {
       resolveFoulChoice,
       resolveBreakChoice: resolveBreakChoiceAction,
       openConcedeConfirm,
+      requestStalemate,
       confirmConcede,
       cancelConcede,
       toggleGuide,
@@ -1153,6 +1206,7 @@ export function useBilliards() {
       nudge,
       setPower,
       setSpin,
+      nominateColor,
       shoot,
     },
   }

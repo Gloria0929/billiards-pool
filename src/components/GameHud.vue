@@ -23,6 +23,8 @@ const watching = computed(
     props.ui.online.seat !== props.ui.turn,
 )
 
+const colorNames = ['黄', '绿', '棕', '蓝', '粉', '黑']
+
 const views = [
   { id: 'top', label: '俯视' },
   { id: 'orbit', label: '3D 全景' },
@@ -108,6 +110,20 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
       <b>{{ ui.match.wins[0] }} : {{ ui.match.wins[1] }}</b>
     </div>
     <div class="hud-actions">
+      <select
+        v-if="ui.canNominate"
+        class="color-nomination"
+        aria-label="指定目标彩球"
+        :value="ui.nominatedColor ?? ''"
+        @change="actions.nominateColor(Number($event.target.value))"
+      >
+        <option value="" disabled>指定彩球</option>
+        <template v-for="ball in ui.balls" :key="ball.n">
+          <option v-if="ball.on && ball.n >= 16" :value="ball.n">
+            {{ colorNames[ball.n - 16] }}球
+          </option>
+        </template>
+      </select>
       <nav class="viewbar viewbar-inline" aria-label="选择视角">
         <button
           v-for="item in views"
@@ -121,6 +137,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
           {{ item.label }}
         </button>
       </nav>
+      <button v-if="ui.canRequestStalemate" @click="actions.requestStalemate">重摆</button>
       <button
         v-if="ui.mode === 'snk' && ui.phase !== 'over'"
         id="concede"

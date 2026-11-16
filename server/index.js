@@ -4,12 +4,13 @@ import { existsSync } from 'node:fs'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
-import { createMatch, publicState, resolveBreakChoice, simulateShot } from '../src/game/match.js'
+import { createMatch, offerStalemate, publicState, resolveBreakChoice, resolveFrameChoice, simulateShot } from '../src/game/match.js'
 import {
-  concedeFrame,
-  resolveSnookerChoice,
+  canNominateColor,
+  offerConcession,
   snookerPointsRemaining,
 } from '../src/game/rules.js'
+import { canPlaceCue } from '../src/game/physics.js'
 import { clamp } from '../src/game/constants.js'
 import {
   advanceSeries,
@@ -240,7 +241,7 @@ function newMatch(room) {
   ]
   // 每局轮换开球方：第 1 局房主/玩家1，第 2 局对手，依此类推。
   if ((room.match?.frame || 1) % 2 === 0) {
-    room.state.turn = 1
+    room.state.turn = room.state.opener = 1
     room.state.message = `${room.state.names?.[1] || '玩家2'} 开球 · 拖动白球摆位，轻点台面瞄准`
   }
   room.started = true
@@ -279,6 +280,7 @@ function sanitizeShot(raw) {
     power: clamp(power, 0, 1),
     spin,
     cue,
+    nominatedColor: Number.isInteger(raw.nominatedColor) ? raw.nominatedColor : null,
   }
 }
 
@@ -455,7 +457,11 @@ function handleMessage(ws, message) {
     const other = room.clients[1 - ws.seat]
     if (!other) return
     const aim = sanitizeAim(message.aim, room.state.geo)
-    if (aim) send(other, { type: 'aim', seat: ws.seat, aim })
+    if (aim) {
+      if (aim.cue && (!room.state.inHand || !canPlaceCue(room.state, aim.cue.x, aim.cue.y)))
+        aim.cue = null
+      send(other, { type: 'aim', seat: ws.seat, aim })
+    }
     return
   }
 
@@ -503,6 +509,16 @@ function handleMessage(ws, message) {
       send(ws, { type: 'error', message: '击球参数无效。' })
       return
     }
+    if (shot.nominatedColor !== null && !canNominateColor(room.state, shot.nominatedColor)) {
+      send(ws, { type: 'error', message: '指定的彩球无效。' })
+      send(ws, { type: 'state', state: publicState(room.state) })
+      return
+    }
+    if (room.state.inHand && shot.cue && !canPlaceCue(room.state, shot.cue.x, shot.cue.y)) {
+      send(ws, { type: 'error', message: '白球必须摆在允许击球的空位上。' })
+      send(ws, { type: 'state', state: publicState(room.state) })
+      return
+    }
     const working = structuredClone(room.state)
     working.geo = room.state.geo
     simulateShot(working, shot)
@@ -535,6 +551,10 @@ function handleMessage(ws, message) {
       return
     }
     const decision = message.decision === 'rerack' ? 'rerack' : 'accept'
+    if (choice.kind === 'no-contact' && decision !== 'rerack') {
+      send(ws, { type: 'error', message: '本杆未碰到球堆，请选择重新开球。' })
+      return
+    }
     let breakerSeat = null
     if (decision === 'rerack') {
       breakerSeat = Number(message.breakerSeat)
@@ -608,14 +628,23 @@ function handleMessage(ws, message) {
     }
     const working = structuredClone(room.state)
     working.geo = room.state.geo
-    resolveSnookerChoice(working, decision, freeBall)
-    room.state = working
+    room.state = resolveFrameChoice(working, decision, freeBall)
     recordMatchResult(room)
     broadcast(room, {
       type: 'state',
-      state: publicState(working),
+      state: publicState(room.state),
       match: publicSeries(room.match),
     })
+    return
+  }
+
+  if (type === 'stalemate') {
+    if (room.state?.phase !== 'aim' || ws.seat !== room.state.turn || room.state.breakShot) {
+      send(ws, { type: 'error', message: '现在不能提出重摆。' })
+      return
+    }
+    offerStalemate(room.state)
+    broadcast(room, { type: 'state', state: publicState(room.state) })
     return
   }
 
@@ -642,7 +671,7 @@ function handleMessage(ws, message) {
     }
     const working = structuredClone(room.state)
     working.geo = room.state.geo
-    concedeFrame(working, ws.seat)
+    offerConcession(working, ws.seat)
     room.state = working
     recordMatchResult(room)
     broadcast(room, {

@@ -1,9 +1,9 @@
 import { MAX_SIM_STEPS, MODES, clamp } from './constants.js'
 import { colorSpot, cueSpot, getGeometry } from './geometry.js'
-import { place, moving, step } from './physics.js'
-import { endShot, playerLabel } from './rules.js'
+import { canPlaceCue, frozenCushions, placeCue, moving, step } from './physics.js'
+import { acceptLineBallInHand, endShot, playerLabel, resolveSnookerChoice } from './rules.js'
 
-const BREAK_SPEED_BOOST = 1.75
+const BREAK_SPEED_BOOST = 2.3
 
 const makeBall = (n, x, y, phys = null) => ({
   n,
@@ -135,6 +135,8 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
     geo,
     balls,
     turn: 0,
+    opener: 0,
+    quietShots: 0,
     grp: [null, null],
     inHand: true,
     inHandLine: false,
@@ -145,6 +147,7 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
     cueIn: false,
     railBalls: [],
     railAfterContact: false,
+    breakCrossed: [],
     breakChoice: null,
     breakMisses: [0, 0],
     sn: {
@@ -173,7 +176,8 @@ export function rerackPool(state, breakerSeat = 0) {
   const seed = (Math.random() * 2 ** 32) >>> 0
   state.balls = buildBalls('pool', mulberry32(seed), geo)
   state.seed = seed
-  state.turn = breakerSeat === 1 ? 1 : 0
+  state.turn = state.opener = breakerSeat === 1 ? 1 : 0
+  state.quietShots = 0
   state.grp = [null, null]
   state.inHand = true
   state.inHandLine = true
@@ -201,10 +205,10 @@ export function resolveBreakChoice(state, decision, breakerSeat = null) {
   const choice = state && state.breakChoice
   if (!choice) return state
   if (decision === 'rerack') {
-    const seat =
-      breakerSeat === 0 || breakerSeat === 1 ? breakerSeat : choice.offender
-    return rerackPool(state, seat)
+    const seat = choice.kind === 'eight' ? choice.seat : breakerSeat
+    return rerackPool(state, seat === choice.seat ? seat : choice.offender)
   }
+  if (choice.kind === 'no-contact') return state
   state.breakChoice = null
   state.turn = choice.seat
   state.inHand = false
@@ -214,8 +218,41 @@ export function resolveBreakChoice(state, decision, breakerSeat = null) {
   state.potted = []
   state.cueIn = false
   state.phase = 'aim'
-  state.message = `${playerLabel(state, choice.seat)}接受台面,继续击球`
+  if (choice.kind === 'foul') acceptLineBallInHand(state)
+  state.message = `${playerLabel(state, choice.seat)}${state.inHandLine ? '获得线后自由球' : '接受台面,继续击球'}`
   return state
+}
+
+export function offerStalemate(state) {
+  state.sn.choice = { kind: 'stalemate', seat: 1 - state.turn, offender: state.turn }
+  state.phase = 'choice'
+  state.message = `${playerLabel(state, state.turn)}提议本局重摆`
+}
+
+export function resolveFrameChoice(state, decision, freeBall) {
+  if (state.sn.choice?.kind !== 'stalemate') return resolveSnookerChoice(state, decision, freeBall)
+  state.sn.choice = null
+  if (decision !== 'play') {
+    state.phase = 'aim'
+    state.message = `${playerLabel(state, state.turn)}继续击球`
+    return state
+  }
+  if (state.mode === 'pool') return rerackPool(state, state.opener)
+  if (state.sn.decider) {
+    const black = state.balls.find((ball) => ball.n === 21)
+    ;[black.x, black.y] = colorSpot(state.geo, 21)
+    placeCue(state)
+    state.inHand = true
+    state.phase = 'aim'
+    state.turn = state.sn.blackOpener ?? state.turn
+    state.quietShots = 0
+    state.message = `${playerLabel(state, state.turn)}重开抢黑`
+    return state
+  }
+  const restarted = createMatch(state.mode, undefined, state.names)
+  restarted.turn = restarted.opener = state.opener
+  restarted.message = `${playerLabel(restarted, restarted.opener)}重新开球`
+  return restarted
 }
 
 function captureShotStart(state) {
@@ -231,13 +268,14 @@ function captureShotStart(state) {
       onRed: state.sn.onRed,
       idx: state.sn.idx,
       finalColor: state.sn.finalColor,
+      freeBall: state.sn.freeBall,
     },
   }
 }
 
 export function launchShot(state, shot) {
   const geo = state.geo
-  const { R, W, H } = geo
+  const { R } = geo
   const cue = state.balls[0]
   const angle = Number.isFinite(shot.angle) ? shot.angle : 0
   const power = clamp(Number.isFinite(shot.power) ? shot.power : 0.45, 0, 1)
@@ -246,20 +284,12 @@ export function launchShot(state, shot) {
     y: clamp(Number.isFinite(shot.spin?.y) ? shot.spin.y : 0, -0.65, 0.65),
   }
 
-  if (state.inHand && shot.cue && Number.isFinite(shot.cue.x) && Number.isFinite(shot.cue.y)) {
-    let x = clamp(shot.cue.x, 0, W)
-    if (state.inHandLine) x = Math.min(x, W / 4)
-    const y = clamp(shot.cue.y, 0, H)
-    cue.x = x
-    cue.y = y
-    if (!cue.on) cue.on = true
-    place(geo, state.balls, cue, x, y)
-  }
-  if (!cue.on) {
+  if (state.inHand && shot.cue && canPlaceCue(state, shot.cue.x, shot.cue.y)) {
+    cue.x = shot.cue.x
+    cue.y = shot.cue.y
     cue.on = true
-    cue.x = cueSpot(geo)[0]
-    cue.y = cueSpot(geo)[1]
   }
+  if (!cue.on || (state.inHand && !canPlaceCue(state, cue.x, cue.y))) placeCue(state)
   cue.vx = cue.vy = cue.wx = cue.wy = cue.wz = 0
   cue.st = 0
   cue.q = null
@@ -273,6 +303,8 @@ export function launchShot(state, shot) {
 
   // 记录出杆前的球位与目标状态，供斯诺克犯规后的“重打 / 复位”使用。
   state.shotStart = captureShotStart(state)
+  state.nominatedColor = shot.nominatedColor ?? null
+  state.shotAngle = angle
 
   const speed =
     ((200 + power * 8300) * (state.breakShot ? BREAK_SPEED_BOOST : 1)) /
@@ -288,10 +320,17 @@ export function launchShot(state, shot) {
 
   state.events = []
   state.firstHit = null
+  state.firstHits = []
   state.potted = []
   state.cueIn = false
   state.railBalls = []
   state.railAfterContact = false
+  state.breakCrossed = []
+  state.frozenRails = state.mode === 'pool' && !state.breakShot
+    ? frozenCushions(geo, state.balls)
+    : null
+  state.offTable = []
+  state.cueCrossedLine = false
   state.inHand = false
   state.inHandLine = false
   state.phase = 'moving'
@@ -332,6 +371,8 @@ export function publicState(state) {
       mu: b.mu || 1,
     })),
     turn: state.turn,
+    opener: state.opener,
+    quietShots: state.quietShots,
     grp: [...state.grp],
     inHand: state.inHand,
     inHandLine: state.inHandLine,
@@ -344,6 +385,7 @@ export function publicState(state) {
       ? {
           seat: state.breakChoice.seat,
           offender: state.breakChoice.offender,
+          kind: state.breakChoice.kind || 'miss',
         }
       : null,
     breakMisses: [...(state.breakMisses || [0, 0])],
@@ -359,11 +401,13 @@ export function publicState(state) {
             freeBall: !!state.sn.choice.freeBall,
             miss: !!state.sn.choice.miss,
             warn: !!state.sn.choice.warn,
+          kind: state.sn.choice.kind ?? null,
           }
         : null,
       freeBall: state.sn.freeBall || null,
       missStreak: { ...state.sn.missStreak },
       decider: !!state.sn.decider,
+      blackOpener: state.sn.blackOpener ?? null,
     },
     phase: state.phase,
     message: state.message,
@@ -390,6 +434,8 @@ export function hydrateState(data) {
   state.sn.freeBall = state.sn.freeBall || null
   state.sn.missStreak = state.sn.missStreak || { seat: null, count: 0 }
   state.sn.decider = !!state.sn.decider
+  state.opener ??= 0
+  state.quietShots ??= 0
   state.inHandLine = !!state.inHandLine
   state.breakChoice = state.breakChoice || null
   state.breakMisses = Array.isArray(state.breakMisses)
