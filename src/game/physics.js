@@ -169,28 +169,18 @@ export function step(state) {
         c.vy += (j2 / mc) * ny
         pushEvent(state, 'b', vn, (a.x + c.x) / 2, (a.y + c.y) / 2, `${a.n}-${c.n}`)
         {
+          // 只有侧旋（加塞，绕竖直轴的 wz）才会让目标球“带偏”。不带塞时
+          // 目标球严格沿两球连心线出球，辅助线的预测与实际落点一致。
           const W2 = R * (a.wz + c.wz)
-          const ux = a.vx - c.vx - W2 * ny
-          const uy = a.vy - c.vy + W2 * nx
-          const uz = R * ((a.wx + c.wx) * ny - (a.wy + c.wy) * nx)
-          const uh = -ux * ny + uy * nx
-          const m = Math.hypot(uh, uz)
-          if (m > 1e-6) {
-            // 目标球被摩擦带偏的角度保持在 1° 以内，否则辅助线按正碰方向
-            // 预测的线路会和实际落点明显不一致，正常瞄准也容易打薄。
-            const P = Math.min(0.01 * j2, m / 7)
-            const Ph = (-P * uh) / m
-            const Pz = (-P * uz) / m
+          if (Math.abs(W2) > 1e-6) {
+            const P = Math.min(0.06 * j2, Math.abs(W2) / 7)
+            const Ph = -P * Math.sign(W2)
             const k = 2.5 / R
             a.vx += -Ph * ny
             a.vy += Ph * nx
             c.vx -= -Ph * ny
             c.vy -= Ph * nx
-            for (const o of [a, c]) {
-              o.wx += k * ny * Pz
-              o.wy -= k * nx * Pz
-              o.wz += k * Ph
-            }
+            for (const o of [a, c]) o.wz += k * Ph
           }
         }
         if (state.firstHit === null) {
