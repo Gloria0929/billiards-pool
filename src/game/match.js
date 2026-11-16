@@ -135,7 +135,16 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
     firstHit: null,
     potted: [],
     cueIn: false,
-    sn: { score: [0, 0], onRed: true, idx: 0, finalColor: false, choice: null },
+    sn: {
+      score: [0, 0],
+      onRed: true,
+      idx: 0,
+      finalColor: false,
+      choice: null,
+      freeBall: null,
+      foulStreak: { seat: null, count: 0 },
+      decider: false,
+    },
     phase: 'aim',
     message: `${(names && names[0]) || '玩家1'} 开球 · 拖动白球摆位，轻点台面瞄准`,
     winner: null,
@@ -264,8 +273,15 @@ export function publicState(state) {
       idx: state.sn.idx,
       finalColor: !!state.sn.finalColor,
       choice: state.sn.choice
-        ? { seat: state.sn.choice.seat, offender: state.sn.choice.offender }
+        ? {
+            seat: state.sn.choice.seat,
+            offender: state.sn.choice.offender,
+            freeBall: !!state.sn.choice.freeBall,
+          }
         : null,
+      freeBall: state.sn.freeBall || null,
+      foulStreak: { ...state.sn.foulStreak },
+      decider: !!state.sn.decider,
     },
     phase: state.phase,
     message: state.message,
@@ -289,6 +305,9 @@ export function hydrateState(data) {
   state.sn = state.sn || { score: [0, 0], onRed: true, idx: 0 }
   state.sn.finalColor = !!state.sn.finalColor
   state.sn.choice = state.sn.choice || null
+  state.sn.freeBall = state.sn.freeBall || null
+  state.sn.foulStreak = state.sn.foulStreak || { seat: null, count: 0 }
+  state.sn.decider = !!state.sn.decider
   return state
 }
 

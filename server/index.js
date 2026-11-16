@@ -5,7 +5,11 @@ import { extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { createMatch, publicState, simulateShot } from '../src/game/match.js'
-import { resolveSnookerChoice } from '../src/game/rules.js'
+import {
+  concedeFrame,
+  resolveSnookerChoice,
+  snookerPointsRemaining,
+} from '../src/game/rules.js'
 import { clamp } from '../src/game/constants.js'
 
 const PORT = Number(process.env.WS_PORT || 3210)
@@ -363,9 +367,51 @@ function handleMessage(ws, message) {
       return
     }
     const decision = message.decision === 'replay' ? 'replay' : 'play'
+    const freeBall = Number.isInteger(message.freeBall)
+      ? message.freeBall
+      : null
+    if (decision === 'play' && choice.freeBall && freeBall != null) {
+      if (
+        freeBall < 16 ||
+        freeBall > 21 ||
+        !room.state.balls.some((ball) => ball.on && ball.n === freeBall)
+      ) {
+        send(ws, { type: 'error', message: '自由球选择无效。' })
+        return
+      }
+    }
     const working = structuredClone(room.state)
     working.geo = room.state.geo
-    resolveSnookerChoice(working, decision)
+    resolveSnookerChoice(working, decision, freeBall)
+    room.state = working
+    broadcast(room, { type: 'state', state: publicState(working) })
+    return
+  }
+
+  if (type === 'concede') {
+    if (!room.started || !room.state) {
+      send(ws, { type: 'error', message: '对局还没有开始。' })
+      return
+    }
+    if (room.state.mode !== 'snk' || room.state.phase !== 'aim') {
+      send(ws, { type: 'error', message: '现在不能认输。' })
+      return
+    }
+    if (ws.seat !== room.state.turn) {
+      send(ws, { type: 'error', message: '还没轮到你击球。' })
+      return
+    }
+    const op = 1 - ws.seat
+    if (
+      room.state.sn.score[ws.seat] + snookerPointsRemaining(room.state) >=
+      room.state.sn.score[op]
+    ) {
+      send(ws, { type: 'error', message: '台面剩余分数足够，不能认输。' })
+      return
+    }
+    const working = structuredClone(room.state)
+    working.geo = room.state.geo
+    concedeFrame(working, ws.seat)
     room.state = working
     broadcast(room, { type: 'state', state: publicState(working) })
     return

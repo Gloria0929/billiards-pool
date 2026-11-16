@@ -18,6 +18,13 @@ const difficultyNote = computed(
     })[props.ui.aiDifficulty] || "",
 );
 
+const SNK_NAMES = ["黄", "绿", "棕", "蓝", "粉", "黑"];
+const freeBallColors = computed(() =>
+  props.ui.balls
+    .filter((ball) => ball.on && ball.n >= 16)
+    .map((ball) => ({ n: ball.n, label: SNK_NAMES[ball.n - 16] })),
+);
+
 const summary = computed(() =>
   props.ui.selectedMode === "pool"
     ? "已选中式八球 · 清完本组，再打黑八"
@@ -176,7 +183,7 @@ const rematchText = computed(() => {
 
       <template v-else-if="ui.menu.kind === 'foul-choice'">
         <div v-if="ui.menu.mine" class="room-actions">
-          <button id="foul-play" @click="actions.resolveFoulChoice('play')">
+          <button id="foul-play" @click="actions.chooseFoulPlay">
             自己击球
           </button>
           <button
@@ -187,6 +194,32 @@ const rematchText = computed(() => {
           </button>
         </div>
         <p v-else class="rematch-note">等待对手选择…</p>
+      </template>
+
+      <template v-else-if="ui.menu.kind === 'free-ball'">
+        <div class="room-actions free-ball-actions">
+          <button
+            v-for="color in freeBallColors"
+            :key="color.n"
+            @click="actions.resolveFoulChoice('play', color.n)"
+          >
+            {{ color.label }}球
+          </button>
+          <button @click="actions.resolveFoulChoice('play')">
+            不用自由球
+          </button>
+        </div>
+      </template>
+
+      <template v-else-if="ui.menu.kind === 'concede'">
+        <div class="room-actions">
+          <button id="concede-yes" @click="actions.confirmConcede">
+            确认认输
+          </button>
+          <button id="concede-no" @click="actions.cancelConcede">
+            继续比赛
+          </button>
+        </div>
       </template>
 
       <template v-else-if="ui.menu.kind === 'online'">

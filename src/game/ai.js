@@ -132,11 +132,18 @@ function legalTargets(state, seat) {
     return eight ? [eight] : []
   }
 
+  if (state.sn.decider) {
+    const black = onTable.find((ball) => ball.n === 21)
+    return black ? [black] : []
+  }
+  const freeBall = state.sn.freeBall
+    ? onTable.find((ball) => ball.n === state.sn.freeBall)
+    : null
   const reds = onTable.filter((ball) => ball.n >= 1 && ball.n <= 15)
-  if (reds.length)
-    return state.sn.onRed
-      ? reds
-      : onTable.filter((ball) => ball.n >= 16)
+  if (reds.length) {
+    if (!state.sn.onRed) return onTable.filter((ball) => ball.n >= 16)
+    return freeBall ? [...reds, freeBall] : reds
+  }
   if (state.sn.finalColor) return onTable.filter((ball) => ball.n >= 16)
   const nextColor = onTable.find((ball) => ball.n === 16 + state.sn.idx)
   return nextColor ? [nextColor] : []

@@ -105,6 +105,19 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
         </button>
       </nav>
       <button
+        v-if="ui.mode === 'snk' && ui.phase !== 'over'"
+        id="concede"
+        :disabled="!ui.canConcede"
+        :title="
+          ui.canConcede
+            ? '本局认输'
+            : '轮到你击球且台面剩余分数不足以追平时才能认输'
+        "
+        @click="actions.openConcedeConfirm"
+      >
+        认输
+      </button>
+      <button
         id="settings-toggle"
         :aria-expanded="ui.settingsOpen"
         aria-controls="settings-panel"

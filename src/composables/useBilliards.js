@@ -1,7 +1,7 @@
 import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { BilliardsEngine } from '../game/engine.js'
 import { createMatch, hydrateState, snapshot } from '../game/match.js'
-import { endShot, resolveSnookerChoice } from '../game/rules.js'
+import { concedeFrame, endShot, resolveSnookerChoice, snookerPointsRemaining } from '../game/rules.js'
 import { MODES } from '../game/constants.js'
 import { chooseAiShot } from '../game/ai.js'
 import * as audio from '../game/audio.js'
@@ -46,6 +46,7 @@ export function useBilliards() {
     showGuide: true,
     aiDifficulty: 'normal',
     canShoot: false,
+    canConcede: false,
     modeLabel: '中式八球 · 本地双人',
     menu: {
       visible: true,
@@ -175,6 +176,15 @@ export function useBilliards() {
       myTurn &&
       !ui.online.waiting &&
       !aiTurn
+    const playerSeat = onlinePlaying ? ui.online.seat : 0
+    ui.canConcede =
+      state.mode === 'snk' &&
+      state.phase === 'aim' &&
+      playerSeat != null &&
+      state.turn === playerSeat &&
+      !ui.online.waiting &&
+      state.sn.score[playerSeat] + snookerPointsRemaining(state) <
+        state.sn.score[1 - playerSeat]
     engine?.setInteraction(ui.canShoot)
   }
 
@@ -297,7 +307,11 @@ export function useBilliards() {
       'foul-choice',
       '犯规判罚。',
       mine
-        ? '罚分已计入。你可以自己击球，也可以让对手回到犯规前的球位重打。'
+        ? `罚分已计入。你可以自己击球，也可以让对手回到犯规前的球位重打。${
+            choice.freeBall
+              ? ' 白球被完全挡住，下一步可以选择自由球。'
+              : ''
+          }`
         : '等待对手选择：自己击球，或让你回到犯规前的球位重打。',
     )
     ui.menu.mine = mine
@@ -327,27 +341,75 @@ export function useBilliards() {
         ui.online.status === 'idle' &&
         state?.phase === 'choice' &&
         state.sn?.choice?.seat === 1
-      )
-        resolveFoulChoice('play')
+      ) {
+        const choice = state.sn.choice
+        const color = choice.freeBall
+          ? [21, 20, 19, 18, 17, 16].find((n) =>
+              state.balls.some((ball) => ball.on && ball.n === n),
+            ) || null
+          : null
+        resolveFoulChoice('play', color)
+      }
     }, 900)
   }
 
-  function resolveFoulChoice(decision) {
+  function chooseFoulPlay() {
+    const choice = state?.sn?.choice
+    if (!choice) return
+    if (choice.freeBall) {
+      showMenu(
+        'free-ball',
+        '自由球。',
+        '白球被完全挡住。你可以选一颗彩球当作红球，也可以不用自由球。',
+      )
+    } else resolveFoulChoice('play')
+  }
+
+  function resolveFoulChoice(decision, freeBall = null) {
     if (!state?.sn?.choice) return
     if (ui.online.status === 'playing') {
-      if (!net.send({ type: 'choice', decision })) return
+      if (!net.send({ type: 'choice', decision, freeBall })) return
       ui.online.waiting = true
-      if (ui.menu.kind === 'foul-choice') {
-        ui.menu.mine = false
-        ui.menu.intro = '已提交选择，等待对局继续…'
-      }
+      if (ui.menu.visible) closeMenu()
       syncUi()
       return
     }
-    resolveSnookerChoice(state, decision)
+    resolveSnookerChoice(state, decision, freeBall)
     closeMenu()
     syncUi()
     maybeScheduleAi()
+  }
+
+  /* ---------- 斯诺克认输 ---------- */
+  function openConcedeConfirm() {
+    if (!ui.canConcede) return
+    showMenu(
+      'concede',
+      '确认认输？',
+      '台面剩余分数已经不足以追平，认输后本局结束。',
+    )
+  }
+
+  function cancelConcede() {
+    if (ui.menu.kind !== 'concede') return
+    closeMenu()
+    syncUi()
+    maybeScheduleAi()
+  }
+
+  function confirmConcede() {
+    if (!ui.canConcede) return
+    if (ui.online.status === 'playing') {
+      if (!net.send({ type: 'concede' })) return
+      closeMenu()
+      ui.online.waiting = true
+      syncUi()
+      return
+    }
+    concedeFrame(state, 0)
+    closeMenu()
+    syncUi()
+    openOverlayForResult()
   }
 
   /* ---------- 音效 / 辅助线 ---------- */
@@ -674,9 +736,8 @@ export function useBilliards() {
     client.on('error', (message) => {
       ui.online.error = message.message || '联机服务出错了。'
       if (ui.online.status === 'connecting') ui.online.status = 'idle'
-      if (state?.phase === 'choice' && ui.menu.kind === 'foul-choice') {
-        ui.menu.mine = state.sn?.choice?.seat === ui.online.seat
-        ui.menu.intro = ui.online.error
+      if (ui.online.status === 'playing' && state?.phase === 'choice') {
+        openFoulChoice()
       }
     })
 
@@ -735,7 +796,11 @@ export function useBilliards() {
       setAiDifficulty,
       openMenu,
       resumeGame,
+      chooseFoulPlay,
       resolveFoulChoice,
+      openConcedeConfirm,
+      confirmConcede,
+      cancelConcede,
       toggleGuide,
       toggleSettings,
       closeSettings,
