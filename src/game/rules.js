@@ -128,9 +128,9 @@ export function resolveSnookerChoice(state, decision) {
     state.inHand = snapshot.inHand
     state.breakShot = snapshot.breakShot
     state.canEight = snapshot.canEight
-    state.sn.onRed = snapshot.sn.onRed
-    state.sn.idx = snapshot.sn.idx
-    state.sn.finalColor = snapshot.sn.finalColor
+    // 目标球不跟随快照恢复，而是按犯规后的正常顺序重新判定：
+    // 对手刚打完一颗红球、正在打彩球时犯规，重打应从红球开始，
+    // 不能沿用犯规那一杆的彩球目标。
     state.message = `${playerLabel(
       state,
       state.turn,
