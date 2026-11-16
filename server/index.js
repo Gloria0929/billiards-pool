@@ -218,6 +218,10 @@ function sanitizeAim(raw, geo) {
   return {
     angle: ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2),
     power: clamp(power, 0, 1),
+    spin: {
+      x: finite(raw.spin?.x, -0.65, 0.65, 0),
+      y: finite(raw.spin?.y, -0.65, 0.65, 0),
+    },
     view,
     orbit,
     cue,

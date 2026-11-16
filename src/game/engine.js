@@ -1370,6 +1370,7 @@ export class BilliardsEngine {
     return {
       angle: this.angle,
       power: this.power,
+      spin: { x: this.spin.x, y: this.spin.y },
       view: this.view,
       orbit: {
         yaw: this.orbitYaw,
@@ -1390,6 +1391,12 @@ export class BilliardsEngine {
       this.power = clamp(aim.power, 0.01, 1)
       this.onPower?.(this.power)
     }
+    if (
+      aim.spin &&
+      Number.isFinite(aim.spin.x) &&
+      Number.isFinite(aim.spin.y)
+    )
+      this.setSpin({ x: aim.spin.x, y: aim.spin.y })
     if (aim.orbit) {
       if (Number.isFinite(aim.orbit.yaw)) this.orbitYaw = aim.orbit.yaw
       if (Number.isFinite(aim.orbit.pitch))

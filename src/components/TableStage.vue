@@ -45,7 +45,14 @@ const turnNote = computed(() => {
     props.ui.names?.[1 - props.ui.online.seat] ||
     props.ui.online.players?.[1 - props.ui.online.seat]?.name ||
     '对手'
-  return `正在观看 ${name} 瞄准…`
+  const spin = []
+  if (Math.abs(props.ui.spin.x) > 0.02)
+    spin.push(props.ui.spin.x > 0 ? '右塞' : '左塞')
+  if (Math.abs(props.ui.spin.y) > 0.02)
+    spin.push(props.ui.spin.y > 0 ? '高杆' : '低杆')
+  return `正在观看 ${name} 瞄准… · 力度 ${Math.round(
+    props.ui.power * 100,
+  )}%${spin.length ? ' · ' + spin.join('·') : ''}`
 })
 </script>
 
