@@ -1,6 +1,7 @@
 <script setup>
 import { onBeforeUnmount } from 'vue'
 import SpinPad from './SpinPad.vue'
+import { AIM_NUDGE } from '../game/constants.js'
 
 const props = defineProps({
   ui: { type: Object, required: true },
@@ -8,16 +9,22 @@ const props = defineProps({
 })
 
 let timer = null
+let held = 0
 
-function nudge(delta) {
-  props.actions.nudge(delta)
+function nudge(direction, step) {
+  props.actions.nudge(direction * step)
 }
 
-function beginNudge(delta) {
+function beginNudge(direction) {
   if (!props.ui.canShoot) return
   stopNudge()
-  nudge(delta)
-  timer = setInterval(() => nudge(delta), 40)
+  held = 0
+  nudge(direction, AIM_NUDGE)
+  timer = setInterval(() => {
+    // 单击保持精细；按住约半秒后逐步加速，方便大角度转向。
+    const step = AIM_NUDGE * (1 + Math.min(held++, 12) * 0.1)
+    nudge(direction, step)
+  }, 40)
 }
 
 function stopNudge() {
@@ -42,7 +49,7 @@ onBeforeUnmount(stopNudge)
       <button
         aria-label="向左微调瞄准"
         :disabled="!ui.canShoot"
-        @pointerdown.prevent="beginNudge(0.0012)"
+        @pointerdown.prevent="beginNudge(1)"
         @pointerup="stopNudge"
         @pointercancel="stopNudge"
         @pointerleave="stopNudge"
@@ -52,14 +59,14 @@ onBeforeUnmount(stopNudge)
       <button
         aria-label="向右微调瞄准"
         :disabled="!ui.canShoot"
-        @pointerdown.prevent="beginNudge(-0.0012)"
+        @pointerdown.prevent="beginNudge(-1)"
         @pointerup="stopNudge"
         @pointercancel="stopNudge"
         @pointerleave="stopNudge"
       >
         微调 →
       </button>
-      <span>方向键微调 · 双击白球图复位击点</span>
+      <span>方向键微调 · Shift+方向键更细 · 双击白球图复位击点</span>
     </div>
     <label class="pw">
       力度

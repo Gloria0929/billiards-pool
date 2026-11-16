@@ -47,4 +47,8 @@ export const SC = [0xf2d100, 0x0f7a3a, 0x6b3a1e, 0x1c4db0, 0xf08fb0, 0x161616]
 
 export const MAX_SIM_STEPS = 400000
 
+// 瞄准微调步长（弧度）：按钮 / 方向键用 AIM_NUDGE，按住 Shift 时更细。
+export const AIM_NUDGE = 0.0004
+export const AIM_NUDGE_FINE = 0.0001
+
 export const clamp = (value, min, max) => Math.min(max, Math.max(min, value))

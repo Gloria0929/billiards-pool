@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { COL, DT, MAX_SIM_STEPS, RAIL, SC, clamp } from './constants.js'
+import { AIM_NUDGE, AIM_NUDGE_FINE, COL, DT, MAX_SIM_STEPS, RAIL, SC, clamp } from './constants.js'
 import { getGeometry, toWorldX, toWorldZ } from './geometry.js'
 import { moving, step } from './physics.js'
 import { buildAimGuide } from './guide.js'
@@ -1029,7 +1029,7 @@ export class BilliardsEngine {
         (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
       ) {
         e.preventDefault()
-        this.rotateAim((e.key === 'ArrowLeft' ? 1 : -1) * (e.shiftKey ? 0.0003 : 0.0012))
+        this.rotateAim((e.key === 'ArrowLeft' ? 1 : -1) * (e.shiftKey ? AIM_NUDGE_FINE : AIM_NUDGE))
       }
       if (this.interactionEnabled && e.key.toLowerCase() === 'v')
         this.setView({ top: 'orbit', orbit: 'fp', fp: 'top' }[this.view])
