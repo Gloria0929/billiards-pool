@@ -1,6 +1,6 @@
 import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { BilliardsEngine } from '../game/engine.js'
-import { createMatch, hydrateState, snapshot } from '../game/match.js'
+import { createMatch, hydrateState, resolveBreakChoice as applyBreakChoice, snapshot } from '../game/match.js'
 import { concedeFrame, endShot, resolveSnookerChoice, snookerPointsRemaining } from '../game/rules.js'
 import { MODES } from '../game/constants.js'
 import {
@@ -282,6 +282,11 @@ export function useBilliards() {
     audio.ensureAudio()
     const seed = (Math.random() * 2 ** 32) >>> 0
     state = createMatch(ui.selectedMode, seed, ['你', '电脑'])
+    state.breakMisses = [...localSeries.breakMisses]
+    if (localSeries.frame % 2 === 0) {
+      state.turn = 1
+      state.message = '电脑 开球 · 等待电脑击球'
+    }
     engine.loadMatch(state)
     audio.restoreMaster()
     closeMenu()
@@ -327,6 +332,14 @@ export function useBilliards() {
     if (ui.menu.kind !== 'paused' && ui.menu.kind !== 'online-menu') return
     closeMenu()
     audio.restoreMaster()
+    if (state?.phase === 'choice' && state.breakChoice) {
+      if (ui.online.status === 'playing') syncOnlineBreakChoice()
+      else {
+        openBreakChoice()
+        if (state.breakChoice.seat === 1) scheduleAiBreakChoice()
+      }
+      return
+    }
     if (state?.phase === 'choice' && state.sn?.choice) {
       if (ui.online.status === 'playing') syncOnlineFoulChoice()
       else {
@@ -373,6 +386,84 @@ export function useBilliards() {
       engine.playShot(shot)
       syncUi()
     }, 750)
+  }
+
+  /* ---------- 中八开球失机：接受台面 / 重新开球 ---------- */
+  function openBreakChoice() {
+    const choice = state?.breakChoice
+    if (!choice) return
+    const mine =
+      ui.online.status === 'playing'
+        ? choice.seat === ui.online.seat
+        : choice.seat === 0
+    showMenu(
+      'break-choice',
+      '开球失机。',
+      mine
+        ? '开球未达到四球次过线。你可以接受当前台面继续击球，或让任意一方重新开球。'
+        : '等待对手选择：接受当前台面，或重新开球。',
+    )
+    ui.menu.mine = mine
+    ui.menu.offender = choice.offender
+    ui.menu.seat = choice.seat
+  }
+
+  function resolveBreakChoiceAction(decision, target = null) {
+    const choice = state?.breakChoice
+    if (!choice) return
+    const rerack = decision === 'rerack'
+    if (ui.online.status === 'playing') {
+      const breakerSeat = rerack
+        ? target === 'self'
+          ? ui.online.seat
+          : choice.offender
+        : null
+      if (!net.send({ type: 'break-choice', decision, breakerSeat })) return
+      ui.online.waiting = true
+      closeMenu()
+      syncUi()
+      return
+    }
+    const seat = rerack
+      ? target === 'self'
+        ? 0
+        : choice.offender
+      : null
+    applyBreakChoice(state, rerack ? 'rerack' : 'accept', seat)
+    if (state.mode === 'pool') localSeries.breakMisses = [...state.breakMisses]
+    closeMenu()
+    if (rerack) engine?.loadMatch(state)
+    syncUi()
+    maybeScheduleAi()
+  }
+
+  function scheduleAiBreakChoice() {
+    clearAiTimer()
+    aiTimer = setTimeout(() => {
+      aiTimer = null
+      if (
+        ui.online.status === 'idle' &&
+        state?.phase === 'choice' &&
+        state.breakChoice?.seat === 1
+      )
+        resolveBreakChoiceAction('accept')
+    }, 900)
+  }
+
+  function syncOnlineBreakChoice() {
+    if (ui.online.status !== 'playing') return
+    const choice = state?.breakChoice
+    if (state?.phase === 'choice' && choice) {
+      const mine = choice.seat === ui.online.seat
+      if (
+        !ui.menu.visible ||
+        ui.menu.kind !== 'break-choice' ||
+        ui.menu.mine !== mine
+      )
+        openBreakChoice()
+    } else if (ui.menu.visible && ui.menu.kind === 'break-choice') {
+      closeMenu()
+    }
   }
 
   /* ---------- 斯诺克犯规后的选择 / 复位 ---------- */
@@ -594,10 +685,16 @@ export function useBilliards() {
     // 避免玩家下一杆误用电脑的旋转。
     const aiShot = ui.online.status === 'idle' && state.turn === 1
     endShot(state)
+    if (state.mode === 'pool') localSeries.breakMisses = [...state.breakMisses]
     if (aiShot && engine) engine.setSpin({ x: 0, y: 0 })
     syncUi()
     if (state.phase === 'over') {
       openOverlayForResult()
+      return
+    }
+    if (state.phase === 'choice' && state.breakChoice) {
+      openBreakChoice()
+      if (state.breakChoice.seat === 1) scheduleAiBreakChoice()
       return
     }
     if (state.phase === 'choice' && state.sn?.choice) {
@@ -615,7 +712,10 @@ export function useBilliards() {
     engine.applyState(state)
     syncUi()
     if (state.phase === 'over' && ui.online.status === 'playing') openOverlayForResult()
-    else syncOnlineFoulChoice()
+    else {
+      syncOnlineBreakChoice()
+      syncOnlineFoulChoice()
+    }
   }
 
   /* ---------- 联机 ---------- */
@@ -1022,6 +1122,7 @@ export function useBilliards() {
       resumeGame,
       chooseFoulPlay,
       resolveFoulChoice,
+      resolveBreakChoice: resolveBreakChoiceAction,
       openConcedeConfirm,
       confirmConcede,
       cancelConcede,

@@ -1,7 +1,9 @@
 import { MAX_SIM_STEPS, MODES, clamp } from './constants.js'
 import { colorSpot, cueSpot, getGeometry } from './geometry.js'
 import { place, moving, step } from './physics.js'
-import { endShot } from './rules.js'
+import { endShot, playerLabel } from './rules.js'
+
+const BREAK_SPEED_BOOST = 1.75
 
 const makeBall = (n, x, y, phys = null) => ({
   n,
@@ -39,9 +41,7 @@ function shuffle(list, rng) {
   return list
 }
 
-export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names = null) {
-  const geo = getGeometry(mode)
-  const rng = mulberry32(seed >>> 0)
+function buildBalls(mode, rng, geo) {
   const { W, H, R } = geo
   // 开球球型随机化：全部由 seed 决定，联网双方摆球一致。
   // 1) 整座三角架有约 ±3° 的旋转和整体偏移，改变白球撞到第一颗球时的接触点；
@@ -115,6 +115,13 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
           ),
         )
   }
+  return balls
+}
+
+export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names = null) {
+  const geo = getGeometry(mode)
+  const rng = mulberry32(seed >>> 0)
+  const balls = buildBalls(mode, rng, geo)
 
   return {
     version: 1,
@@ -138,6 +145,8 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
     cueIn: false,
     railBalls: [],
     railAfterContact: false,
+    breakChoice: null,
+    breakMisses: [0, 0],
     sn: {
       score: [0, 0],
       onRed: true,
@@ -153,7 +162,60 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
     winner: null,
     events: [],
     shotAnchor: null,
+    shotStart: null,
   }
+}
+
+// 开球失机后按乔氏规则重新摆球，由指定一方重新开球。
+export function rerackPool(state, breakerSeat = 0) {
+  if (!state || state.mode !== 'pool') return state
+  const geo = state.geo || getGeometry('pool')
+  const seed = (Math.random() * 2 ** 32) >>> 0
+  state.balls = buildBalls('pool', mulberry32(seed), geo)
+  state.seed = seed
+  state.turn = breakerSeat === 1 ? 1 : 0
+  state.grp = [null, null]
+  state.inHand = true
+  state.inHandLine = true
+  state.breakShot = true
+  state.canEight = false
+  state.firstHit = null
+  state.potted = []
+  state.cueIn = false
+  state.railBalls = []
+  state.railAfterContact = false
+  state.events = []
+  state.shotAnchor = null
+  state.shotStart = null
+  state.winner = null
+  state.breakChoice = null
+  state.phase = 'aim'
+  state.message = `${playerLabel(
+    state,
+    state.turn,
+  )} 重新开球 · 拖动白球摆位，轻点台面瞄准`
+  return state
+}
+
+export function resolveBreakChoice(state, decision, breakerSeat = null) {
+  const choice = state && state.breakChoice
+  if (!choice) return state
+  if (decision === 'rerack') {
+    const seat =
+      breakerSeat === 0 || breakerSeat === 1 ? breakerSeat : choice.offender
+    return rerackPool(state, seat)
+  }
+  state.breakChoice = null
+  state.turn = choice.seat
+  state.inHand = false
+  state.inHandLine = false
+  state.breakShot = false
+  state.firstHit = null
+  state.potted = []
+  state.cueIn = false
+  state.phase = 'aim'
+  state.message = `${playerLabel(state, choice.seat)}接受台面,继续击球`
+  return state
 }
 
 function captureShotStart(state) {
@@ -212,7 +274,9 @@ export function launchShot(state, shot) {
   // 记录出杆前的球位与目标状态，供斯诺克犯规后的“重打 / 复位”使用。
   state.shotStart = captureShotStart(state)
 
-  const speed = (200 + power * 8300) / (1 + 0.9 * (spin.x * spin.x + spin.y * spin.y))
+  const speed =
+    ((200 + power * 8300) * (state.breakShot ? BREAK_SPEED_BOOST : 1)) /
+    (1 + 0.9 * (spin.x * spin.x + spin.y * spin.y))
   const dx = Math.cos(angle)
   const dy = Math.sin(angle)
   const side = spin.y / 0.4
@@ -276,6 +340,13 @@ export function publicState(state) {
     firstHit: state.firstHit,
     potted: [...state.potted],
     cueIn: state.cueIn,
+    breakChoice: state.breakChoice
+      ? {
+          seat: state.breakChoice.seat,
+          offender: state.breakChoice.offender,
+        }
+      : null,
+    breakMisses: [...(state.breakMisses || [0, 0])],
     sn: {
       score: [...state.sn.score],
       onRed: state.sn.onRed,
@@ -320,6 +391,10 @@ export function hydrateState(data) {
   state.sn.missStreak = state.sn.missStreak || { seat: null, count: 0 }
   state.sn.decider = !!state.sn.decider
   state.inHandLine = !!state.inHandLine
+  state.breakChoice = state.breakChoice || null
+  state.breakMisses = Array.isArray(state.breakMisses)
+    ? state.breakMisses
+    : [0, 0]
   return state
 }
 

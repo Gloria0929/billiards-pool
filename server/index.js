@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
-import { createMatch, publicState, simulateShot } from '../src/game/match.js'
+import { createMatch, publicState, resolveBreakChoice, simulateShot } from '../src/game/match.js'
 import {
   concedeFrame,
   resolveSnookerChoice,
@@ -235,6 +235,14 @@ function leaveRoom(ws, notify = true) {
 function newMatch(room) {
   const seed = (Math.random() * 2 ** 32) >>> 0
   room.state = createMatch(room.mode, seed, room.names)
+  room.state.breakMisses = [
+    ...(room.match?.breakMisses || [0, 0]),
+  ]
+  // 每局轮换开球方：第 1 局房主/玩家1，第 2 局对手，依此类推。
+  if ((room.match?.frame || 1) % 2 === 0) {
+    room.state.turn = 1
+    room.state.message = `${room.state.names?.[1] || '玩家2'} 开球 · 拖动白球摆位，轻点台面瞄准`
+  }
   room.started = true
   room.rematch = [false, false]
   room.match.recorded = false
@@ -499,6 +507,8 @@ function handleMessage(ws, message) {
     working.geo = room.state.geo
     simulateShot(working, shot)
     room.state = working
+    if (working.mode === 'pool')
+      room.match.breakMisses = [...working.breakMisses]
     recordMatchResult(room)
     broadcast(room, {
       type: 'shot',
@@ -507,6 +517,52 @@ function handleMessage(ws, message) {
       state: publicState(working),
       match: publicSeries(room.match),
     })
+    return
+  }
+
+  if (type === 'break-choice') {
+    if (!room.started || !room.state) {
+      send(ws, { type: 'error', message: '对局还没有开始。' })
+      return
+    }
+    const choice = room.state.breakChoice
+    if (room.state.phase !== 'choice' || !choice) {
+      send(ws, { type: 'error', message: '现在没有需要处理的开球失机。' })
+      return
+    }
+    if (ws.seat !== choice.seat) {
+      send(ws, { type: 'error', message: '还没轮到你选择。' })
+      return
+    }
+    const decision = message.decision === 'rerack' ? 'rerack' : 'accept'
+    let breakerSeat = null
+    if (decision === 'rerack') {
+      breakerSeat = Number(message.breakerSeat)
+      if (breakerSeat !== choice.seat && breakerSeat !== choice.offender) {
+        send(ws, { type: 'error', message: '重新开球方无效。' })
+        return
+      }
+    }
+    const working = structuredClone(room.state)
+    working.geo = room.state.geo
+    resolveBreakChoice(working, decision, breakerSeat)
+    room.state = working
+    room.match.breakMisses = [...working.breakMisses]
+    if (decision === 'rerack') {
+      broadcast(room, {
+        type: 'start',
+        state: publicState(working),
+        guide: room.guide,
+        match: publicSeries(room.match),
+      })
+    } else {
+      broadcast(room, {
+        type: 'state',
+        state: publicState(working),
+        match: publicSeries(room.match),
+      })
+    }
+    recordMatchResult(room)
     return
   }
 

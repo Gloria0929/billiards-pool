@@ -23,6 +23,7 @@ export function createSeries(bestOf = 1) {
     frame: 1,
     over: false,
     recorded: false,
+    breakMisses: [0, 0],
   }
 }
 
@@ -43,6 +44,7 @@ export function advanceSeries(series) {
     series.wins = [0, 0]
     series.over = false
     series.frame = 1
+    series.breakMisses = [0, 0]
   } else {
     series.frame += 1
   }
@@ -55,5 +57,6 @@ export function publicSeries(series) {
     wins: [...(series?.wins || [0, 0])],
     frame: series?.frame || 1,
     over: !!series?.over,
+    breakMisses: [...(series?.breakMisses || [0, 0])],
   }
 }

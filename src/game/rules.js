@@ -49,7 +49,6 @@ function endPool(state) {
   const op = 1 - me
   const group = state.grp[me]
   const wasBreak = state.breakShot
-  const railBalls = state.railBalls || []
   let foul = ''
   let txt = ''
 
@@ -64,10 +63,15 @@ function endPool(state) {
       foul = '首先碰到了错误的球'
   } else if (state.firstHit === 8) foul = '首先碰到了8号球'
 
-  // 合法开球：有目标球入袋，或至少 4 颗目标球碰库。
+  // 乔氏合法开球：目标球入袋按 2 球次计，台面上有 1/2 以上越过开球线
+  // 的目标球按 1 球次计，合计至少 4 球次。
+  let breakMiss = false
   if (wasBreak && !foul) {
-    if (!state.potted.some((n) => n >= 1) && railBalls.length < 4)
-      foul = '开球未进球且目标球碰库不足4颗'
+    const pottedObjects = state.potted.filter((n) => n >= 1).length
+    const crossed = state.balls.filter(
+      (b) => b.on && b.n >= 1 && b.x <= geo.W / 4,
+    ).length
+    breakMiss = crossed + pottedObjects * 2 < 4
   }
 
   // 合法击球：主球碰目标球后，若没有目标球入袋，必须有球碰库。
@@ -92,6 +96,25 @@ function endPool(state) {
       )
       return
     }
+  }
+
+  if (breakMiss) {
+    const misses = state.breakMisses || [0, 0]
+    misses[me] += 1
+    state.breakMisses = misses
+    if (misses[me] % 3 === 0) {
+      finish(state, op, `累计${misses[me]}次开球失机判负`)
+      return
+    }
+    state.breakShot = false
+    state.turn = op
+    state.breakChoice = { seat: op, offender: me }
+    state.phase = 'choice'
+    state.message = `开球失机(累计${misses[me]}次) · ${playerLabel(
+      state,
+      op,
+    )}选择接受台面或重新开球`
+    return
   }
 
   if (!group && !foul && !wasBreak) {

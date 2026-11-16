@@ -254,6 +254,27 @@ function openOnlineFromLobby() {
         <OnlinePanel v-else :ui="ui" :actions="actions" />
       </template>
 
+      <template v-else-if="ui.menu.kind === 'break-choice'">
+        <div v-if="ui.menu.mine" class="room-actions">
+          <button id="break-accept" @click="actions.resolveBreakChoice('accept')">
+            接受台面
+          </button>
+          <button
+            id="break-self"
+            @click="actions.resolveBreakChoice('rerack', 'self')"
+          >
+            我重新开球
+          </button>
+          <button
+            id="break-offender"
+            @click="actions.resolveBreakChoice('rerack', 'offender')"
+          >
+            让对方重开
+          </button>
+        </div>
+        <p v-else class="rematch-note">等待对手选择…</p>
+      </template>
+
       <template v-else-if="ui.menu.kind === 'foul-choice'">
         <div v-if="ui.menu.mine" class="room-actions">
           <button id="foul-play" @click="actions.chooseFoulPlay">
