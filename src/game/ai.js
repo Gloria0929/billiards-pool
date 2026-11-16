@@ -1,6 +1,6 @@
 import { getGeometry } from './geometry.js'
-import { castRay } from './physics.js'
-import { simulateShot } from './match.js'
+import { castRay, moving, step } from './physics.js'
+import { launchShot, simulateShot } from './match.js'
 
 const SOLIDS = 'solid'
 
@@ -54,6 +54,65 @@ function trialShot(state, shot, targetN) {
 
 function groupOf(n) {
   return n < 8 ? SOLIDS : 'stripe'
+}
+
+// 只模拟到第一次碰到球，用于寻找解球线路（比跑完整杆快得多）。
+function firstContactNumber(state, shot, legal) {
+  const trial = structuredClone({ ...state, geo: null, events: [] })
+  trial.geo = state.geo
+  trial.events = []
+  launchShot(trial, shot)
+  let guard = 0
+  while (guard++ < 1800) {
+    step(trial)
+    if (trial.cueIn) return null
+    if (trial.firstHit !== null)
+      return legal.has(trial.firstHit) ? trial.firstHit : null
+    if (!moving(trial.balls)) break
+  }
+  return null
+}
+
+// 被做斯诺克时扫描一圈出杆角度，找一条能先碰到合法目标的线路（可借库）。
+function findEscapeShot(state, targets, difficulty) {
+  if (!targets.length) return null
+  const legal = new Set(targets.map((ball) => ball.n))
+  const cue = state.balls[0]
+  const cueRef = { x: cue.x, y: cue.y }
+  const power = 0.55
+  const stepAngle = difficulty === 'hard' ? Math.PI / 90 : Math.PI / 60
+  const hits = []
+  for (let angle = 0; angle < Math.PI * 2; angle += stepAngle) {
+    const shot = { angle, power, spin: { x: 0, y: 0 }, cue: cueRef }
+    const hitN = firstContactNumber(state, shot, legal)
+    if (hitN === null) continue
+    const target = targets.find((ball) => ball.n === hitN)
+    if (!target) continue
+    hits.push({
+      angle,
+      power,
+      distance: Math.hypot(target.x - cue.x, target.y - cue.y),
+    })
+  }
+  if (!hits.length) return null
+  hits.sort((a, b) => a.distance - b.distance)
+  // 再跑几杆完整模拟，避免解到球后白球又落袋。
+  for (const hit of hits.slice(0, 5)) {
+    const trial = structuredClone({ ...state, geo: null, events: [] })
+    trial.geo = state.geo
+    trial.events = []
+    simulateShot(trial, {
+      angle: hit.angle,
+      power: hit.power,
+      spin: { x: 0, y: 0 },
+      cue: cueRef,
+    })
+    if (trial.cueIn) continue
+    if (trial.sn && trial.sn.choice) continue
+    if (trial.firstHit === null || !legal.has(trial.firstHit)) continue
+    return { angle: hit.angle, power: hit.power }
+  }
+  return null
 }
 
 function legalTargets(state, seat) {
@@ -216,6 +275,7 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
   }
 
   let safety = null
+  let direct = null
   for (const target of targets) {
     const dx = target.x - cue.x
     const dy = target.y - cue.y
@@ -231,6 +291,12 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
       0,
     )
     const clear = hit.ball === target
+    if (clear && (!direct || distance < direct.distance))
+      direct = {
+        angle: Math.atan2(dy, dx),
+        power: Math.max(0.3, Math.min(0.8, 0.35 + distance / 5000)),
+        distance,
+      }
     const score = distance + (clear ? 0 : 10000)
     if (!safety || score < safety.score)
       safety = {
@@ -238,6 +304,33 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
         power: Math.max(0.3, Math.min(0.8, 0.35 + distance / 5000)),
         score,
       }
+  }
+  if (direct) {
+    return {
+      angle: direct.angle + (Math.random() - 0.5) * d.safety,
+      power: direct.power,
+      spin: { x: 0, y: 0 },
+      cue: cueRef,
+    }
+  }
+  // 没有不借库就能碰到合法球的角度：扫描一圈找解球线路。
+  const escape = findEscapeShot(state, targets, difficulty)
+  if (escape) {
+    const noise =
+      (Math.random() - 0.5) * d.safety * (difficulty === 'easy' ? 1 : 0.3)
+    const angle = escape.angle + noise
+    const legal = new Set(targets.map((ball) => ball.n))
+    const stillLegal = firstContactNumber(
+      state,
+      { angle, power: escape.power, spin: { x: 0, y: 0 }, cue: cueRef },
+      legal,
+    )
+    return {
+      angle: stillLegal === null ? escape.angle : angle,
+      power: escape.power,
+      spin: { x: 0, y: 0 },
+      cue: cueRef,
+    }
   }
   if (safety) {
     return {

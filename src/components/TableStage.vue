@@ -16,6 +16,7 @@ const hint = computed(() => {
       : props.ui.view === 'orbit'
         ? '轻点瞄准 · 拖动环绕 · 滚轮 / 双指缩放'
         : '左右拖动瞄准 · 上下调高度 · 滚轮调远近'
+  text += ' · 切球瞄准半透明幽灵球'
   if (finePointer) text += ' · 右键后拽 / 按住空格蓄力'
   return text
 })

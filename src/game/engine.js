@@ -154,7 +154,7 @@ export class BilliardsEngine {
       new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
-        opacity: 0.28,
+        opacity: 0.4,
       }),
     )
     this.aimGroup.add(this.ghost)
@@ -833,7 +833,10 @@ export class BilliardsEngine {
         this.setGuideLine(this.bankCueLine, guide.cueBank)
         this.setGuideLine(this.bankObjectLine, guide.objectBank)
         this.setPocketMark(this.cuePocketMark, guide.cueBank)
-        this.setPocketMark(this.objectPocketMark, guide.objectBank)
+        this.setPocketMark(
+          this.objectPocketMark,
+          guide.objectPocket ? { pocket: guide.objectPocket } : guide.objectBank,
+        )
       }
       const strike = this.strikeProgress
       const gap = R + 3 + (11 + this.power * 260) * (1 - strike * strike)

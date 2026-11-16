@@ -68,6 +68,7 @@ export function buildAimGuide(geo, balls, angle) {
     cueBank: null,
     object: null,
     objectBank: null,
+    objectPocket: null,
     deflect: null,
     normal: null,
   }
@@ -92,15 +93,26 @@ export function buildAimGuide(geo, balls, angle) {
       to: { x: objectPath.x, y: objectPath.y },
       hitBall: objectPath.ball,
     }
-    if (!objectPath.ball)
-      guide.objectBank = bankFromWall(
+    if (!objectPath.ball) {
+      // 目标球直接滚向袋口时给出袋口提示；否则再尝试翻袋线路。
+      guide.objectPocket = findPocketOnRay(
         geo,
-        balls,
-        objectPath,
+        target.x,
+        target.y,
         nx,
         ny,
-        target.n,
+        objectPath.t,
       )
+      if (!guide.objectPocket)
+        guide.objectBank = bankFromWall(
+          geo,
+          balls,
+          objectPath,
+          nx,
+          ny,
+          target.n,
+        )
+    }
   } else {
     guide.cueBank = bankFromWall(geo, balls, aim, dx, dy, 0)
   }

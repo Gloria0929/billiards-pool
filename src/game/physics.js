@@ -176,7 +176,9 @@ export function step(state) {
           const uh = -ux * ny + uy * nx
           const m = Math.hypot(uh, uz)
           if (m > 1e-6) {
-            const P = Math.min(0.06 * j2, m / 7)
+            // 目标球被摩擦带偏的角度保持在 1° 以内，否则辅助线按正碰方向
+            // 预测的线路会和实际落点明显不一致，正常瞄准也容易打薄。
+            const P = Math.min(0.01 * j2, m / 7)
             const Ph = (-P * uh) / m
             const Pz = (-P * uz) / m
             const k = 2.5 / R
@@ -201,7 +203,9 @@ export function step(state) {
   for (const b of balls) {
     if (!b.on) continue
     for (const q of PR) {
-      if (Math.hypot(b.x - q[0], b.y - q[1]) < q[2] * 0.85 - R * 0.28) {
+      // 捕获半径与渲染的袋口一致（0.85 倍袋口半径）：球心已经进入袋口
+      // 范围就判落袋，避免看起来进袋了却被库边弹回。
+      if (Math.hypot(b.x - q[0], b.y - q[1]) < q[2] * 0.85) {
         cap(state, b, q)
         break
       }
