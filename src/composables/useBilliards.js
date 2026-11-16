@@ -267,7 +267,7 @@ export function useBilliards() {
     const shot = chooseAiShot(state, 1, ui.aiDifficulty)
     engine.angle = shot.angle
     engine.setPower(shot.power)
-    engine.setSpin({ x: 0, y: 0 })
+    engine.setSpin(shot.spin)
     aiTimer = setTimeout(() => {
       aiTimer = null
       if (!aiTurnReady()) return
@@ -357,7 +357,11 @@ export function useBilliards() {
       }
       return
     }
+    // state.turn 仍是刚出杆的一方；电脑可能用了加塞，停杆后把击点复位，
+    // 避免玩家下一杆误用电脑的旋转。
+    const aiShot = ui.online.status === 'idle' && state.turn === 1
     endShot(state)
+    if (aiShot && engine) engine.setSpin({ x: 0, y: 0 })
     syncUi()
     if (state.phase === 'over') {
       openOverlayForResult()

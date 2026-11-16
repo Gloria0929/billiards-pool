@@ -9,6 +9,15 @@ const props = defineProps({
 
 const tab = ref("local");
 
+const difficultyNote = computed(
+  () =>
+    ({
+      easy: "简单：瞄准误差较大，偶尔随意选球，适合熟悉手感。",
+      normal: "普通：稳定发挥，会挑最近的可进球。",
+      hard: "困难：进球率高，会用加塞和高低杆控制白球走位。",
+    })[props.ui.aiDifficulty] || "",
+);
+
 const summary = computed(() =>
   props.ui.selectedMode === "pool"
     ? "已选中式八球 · 清完本组，再打黑八"
@@ -143,6 +152,7 @@ const rematchText = computed(() => {
               </button>
             </div>
           </div>
+          <p class="difficulty-note">{{ difficultyNote }}</p>
           <div class="mode-footer">
             <p>
               <span id="mode-summary">{{ summary }}</span
