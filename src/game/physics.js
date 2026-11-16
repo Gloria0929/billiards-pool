@@ -114,13 +114,14 @@ export function step(state) {
     const ux = b.vx - R * b.wy
     const uy = b.vy + R * b.wx
     const um = Math.hypot(ux, uy)
+    const mu = b.mu || 1
     if (um > 8) {
-      const a = MUS * G * DT
+      const a = MUS * G * DT * mu
       const ax = ux / um
       const ay = uy / um
       b.vx -= a * ax
       b.vy -= a * ay
-      const al = ((2.5 * MUS * G) / R) * DT
+      const al = ((2.5 * MUS * G) / R) * DT * mu
       b.wx -= al * ay
       b.wy += al * ax
     } else {
@@ -128,7 +129,7 @@ export function step(state) {
       if (s < 6) {
         b.vx = b.vy = b.wx = b.wy = 0
       } else {
-        const f = Math.max(0, s - MUR * G * DT) / s
+        const f = Math.max(0, s - MUR * G * DT * mu) / s
         b.vx *= f
         b.vy *= f
         b.wx = -b.vy / R
@@ -158,11 +159,14 @@ export function step(state) {
       c.y += ny * ov
       const vn = (a.vx - c.vx) * nx + (a.vy - c.vy) * ny
       if (vn > 0) {
-        const j2 = (1.95 * vn) / 2
-        a.vx -= j2 * nx
-        a.vy -= j2 * ny
-        c.vx += j2 * nx
-        c.vy += j2 * ny
+        // 每颗球的微小质量差异（摆球时按 seed 生成）让碰撞链更不可预测。
+        const ma = a.m || 1
+        const mc = c.m || 1
+        const j2 = (1.95 * vn) / (1 / ma + 1 / mc)
+        a.vx -= (j2 / ma) * nx
+        a.vy -= (j2 / ma) * ny
+        c.vx += (j2 / mc) * nx
+        c.vy += (j2 / mc) * ny
         pushEvent(state, 'b', vn, (a.x + c.x) / 2, (a.y + c.y) / 2, `${a.n}-${c.n}`)
         {
           const W2 = R * (a.wz + c.wz)

@@ -5,6 +5,7 @@ const SOLIDS = 'solid'
 
 // 人机对战 AI 难度：angle/power/safety 是误差的满幅（实际误差为 ±一半），
 // randomPick 是不挑最近可进球、改从全部可进球里随机挑的概率。
+// hard 还会优先挑切角小、距离短、成功率最高的球（见 chooseAiShot）。
 // normal 与改动前的固定水平完全一致。
 export const AI_DIFFICULTY = {
   easy: { angle: 0.032, power: 0.2, safety: 0.08, randomPick: 0.3 },
@@ -84,10 +85,18 @@ function potCandidates(state, target) {
       0,
     )
     if (cueHit.ball !== target) continue
+    // 切角越小越稳：1 表示正对袋口，接近 0 表示薄边。
+    const targetDistance = Math.hypot(target.x - cue.x, target.y - cue.y)
+    const cutCos =
+      Math.min(
+        1,
+        ((target.x - cue.x) * ux + (target.y - cue.y) * uy) / targetDistance,
+      )
     candidates.push({
       target,
       angle: Math.atan2(cueDy, cueDx),
       distance: cueDistance + pocketDistance * 0.8,
+      cut: cutCos,
       power: Math.max(
         0.28,
         Math.min(0.9, 0.28 + (cueDistance + pocketDistance * 0.7) / 4500),
@@ -130,7 +139,14 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
   }
   let best = null
   for (const candidate of candidates) {
-    if (!best || candidate.distance < best.distance) best = candidate
+    if (difficulty === 'hard') {
+      // 困难：优先选切角小、距离短、成功率最高的球，而不是最近的球。
+      const quality =
+        Math.max(0.05, candidate.cut) ** 2 / (1 + candidate.distance / 2600)
+      if (!best || quality > best.quality) best = { ...candidate, quality }
+    } else if (!best || candidate.distance < best.distance) {
+      best = candidate
+    }
   }
   if (best && d.randomPick > 0 && candidates.length > 1 && Math.random() < d.randomPick) {
     best = candidates[Math.floor(Math.random() * candidates.length)]

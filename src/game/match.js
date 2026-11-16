@@ -3,7 +3,7 @@ import { colorSpot, cueSpot, getGeometry } from './geometry.js'
 import { place, moving, step } from './physics.js'
 import { endShot } from './rules.js'
 
-const makeBall = (n, x, y) => ({
+const makeBall = (n, x, y, phys = null) => ({
   n,
   x,
   y,
@@ -16,6 +16,8 @@ const makeBall = (n, x, y) => ({
   st: 0,
   q: null,
   fallSpin: null,
+  m: phys ? phys.m : 1,
+  mu: phys ? phys.mu : 1,
 })
 
 export function mulberry32(seed) {
@@ -41,10 +43,25 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
   const geo = getGeometry(mode)
   const rng = mulberry32(seed >>> 0)
   const { W, H, R } = geo
-  // 摆球随机偏移：三角架每颗球加约 0.02 个球直径的随机偏移（用 seed 随机数，
-  // 同 seed 仍可复现，联网对局两边一致）。偏移肉眼不可见，但碰撞链会放大它，
-  // 使每局开球后球形各不相同；不改出杆参数，不影响玩家瞄准。
-  const jit = () => (rng() - 0.5) * R * 0.04
+  // 开球球型随机化：全部由 seed 决定，联网双方摆球一致。
+  // 1) 整座三角架有约 ±3° 的旋转和整体偏移，改变白球撞到第一颗球时的接触点；
+  // 2) 每颗球有约 ±0.08 个球半径的位置误差（真实摆球也不可能完全整齐）；
+  // 3) 每颗球有微小质量 / 摩擦差异，让碰撞链逐局发散，
+  //    开球后球停在哪里不再每次都差不多。
+  const rackTheta = (rng() - 0.5) * 0.1
+  const rackShiftX = (rng() - 0.5) * R * 0.4
+  const rackShiftY = (rng() - 0.5) * R * 0.8
+  const cosT = Math.cos(rackTheta)
+  const sinT = Math.sin(rackTheta)
+  const jit = () => (rng() - 0.5) * R * 0.16
+  const rackPoint = (head, lx, ly) => [
+    head + cosT * lx - sinT * ly + rackShiftX,
+    H / 2 + sinT * lx + cosT * ly + rackShiftY,
+  ]
+  const ballPhys = () => ({
+    m: 1 + (rng() - 0.5) * 0.06,
+    mu: 1 + (rng() - 0.5) * 0.12,
+  })
   let balls
 
   if (mode === 'pool') {
@@ -70,8 +87,12 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
         balls.push(
           makeBall(
             slots[idx++],
-            head + row * dx + jit(),
-            H / 2 + (col - row / 2) * 2 * R * 1.002 + jit(),
+            ...rackPoint(
+              head,
+              row * dx + jit(),
+              (col - row / 2) * 2 * R * 1.002 + jit(),
+            ),
+            ballPhys(),
           ),
         )
   } else {
@@ -85,8 +106,12 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
         balls.push(
           makeBall(
             n++,
-            head + row * dx + jit(),
-            H / 2 + (col - row / 2) * 2 * R * 1.002 + jit(),
+            ...rackPoint(
+              head,
+              row * dx + jit(),
+              (col - row / 2) * 2 * R * 1.002 + jit(),
+            ),
+            ballPhys(),
           ),
         )
   }
@@ -203,6 +228,8 @@ export function publicState(state) {
       on: b.on,
       st: 0,
       q: null,
+      m: b.m || 1,
+      mu: b.mu || 1,
     })),
     turn: state.turn,
     grp: [...state.grp],
@@ -233,6 +260,8 @@ export function hydrateState(data) {
     b.q = b.q || null
     b.fallSpin = b.fallSpin || null
     b.wz = b.wz || 0
+    b.m = b.m || 1
+    b.mu = b.mu || 1
   })
   return state
 }

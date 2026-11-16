@@ -11,6 +11,7 @@ const STORAGE_NAME = 'billiards-name'
 const STORAGE_GUIDE = 'billiards-guide'
 const STORAGE_DIFFICULTY = 'billiards-difficulty'
 const AI_DIFFICULTIES = ['easy', 'normal', 'hard']
+const AI_DIFFICULTY_LABELS = { easy: '简单', normal: '普通', hard: '困难' }
 
 export function useBilliards() {
   const canvasRef = ref(null)
@@ -161,7 +162,7 @@ export function useBilliards() {
     ui.modeLabel =
       ui.online.status === 'room' || onlinePlaying
         ? `${snap.modeName} · 房间 ${ui.online.code}`
-        : `${snap.modeName} · 人机对战`
+        : `${snap.modeName} · 人机对战 · ${AI_DIFFICULTY_LABELS[ui.aiDifficulty] || '普通'}`
     const myTurn = !onlinePlaying || ui.online.seat === state.turn
     const aiTurn =
       ui.online.status === 'idle' &&
