@@ -1,7 +1,7 @@
 import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { BilliardsEngine } from '../game/engine.js'
 import { createMatch, hydrateState, snapshot } from '../game/match.js'
-import { endShot } from '../game/rules.js'
+import { endShot, resolveSnookerChoice } from '../game/rules.js'
 import { MODES } from '../game/constants.js'
 import { chooseAiShot } from '../game/ai.js'
 import * as audio from '../game/audio.js'
@@ -52,6 +52,7 @@ export function useBilliards() {
       kind: 'start',
       title: '选一张球桌，开局。',
       intro: '一杆的手感，一局的较量。选择你想玩的台球。',
+      mine: true,
     },
     online: {
       status: 'idle',
@@ -236,6 +237,14 @@ export function useBilliards() {
     if (ui.menu.kind !== 'paused' && ui.menu.kind !== 'online-menu') return
     closeMenu()
     audio.restoreMaster()
+    if (state?.phase === 'choice' && state.sn?.choice) {
+      if (ui.online.status === 'playing') syncOnlineFoulChoice()
+      else {
+        openFoulChoice()
+        if (state.sn.choice.seat === 1) scheduleAiFoulChoice()
+      }
+      return
+    }
     maybeScheduleAi()
   }
 
@@ -274,6 +283,71 @@ export function useBilliards() {
       engine.playShot(shot)
       syncUi()
     }, 750)
+  }
+
+  /* ---------- 斯诺克犯规后的选择 / 复位 ---------- */
+  function openFoulChoice() {
+    const choice = state?.sn?.choice
+    if (!choice) return
+    const mine =
+      ui.online.status === 'playing'
+        ? choice.seat === ui.online.seat
+        : choice.seat === 0
+    showMenu(
+      'foul-choice',
+      '犯规判罚。',
+      mine
+        ? '罚分已计入。你可以自己击球，也可以让对手回到犯规前的球位重打。'
+        : '等待对手选择：自己击球，或让你回到犯规前的球位重打。',
+    )
+    ui.menu.mine = mine
+  }
+
+  function syncOnlineFoulChoice() {
+    if (ui.online.status !== 'playing') return
+    const choice = state?.sn?.choice
+    if (state?.phase === 'choice' && choice) {
+      const mine = choice.seat === ui.online.seat
+      if (
+        !ui.menu.visible ||
+        ui.menu.kind !== 'foul-choice' ||
+        ui.menu.mine !== mine
+      )
+        openFoulChoice()
+    } else if (ui.menu.visible && ui.menu.kind === 'foul-choice') {
+      closeMenu()
+    }
+  }
+
+  function scheduleAiFoulChoice() {
+    clearAiTimer()
+    aiTimer = setTimeout(() => {
+      aiTimer = null
+      if (
+        ui.online.status === 'idle' &&
+        state?.phase === 'choice' &&
+        state.sn?.choice?.seat === 1
+      )
+        resolveFoulChoice('play')
+    }, 900)
+  }
+
+  function resolveFoulChoice(decision) {
+    if (!state?.sn?.choice) return
+    if (ui.online.status === 'playing') {
+      if (!net.send({ type: 'choice', decision })) return
+      ui.online.waiting = true
+      if (ui.menu.kind === 'foul-choice') {
+        ui.menu.mine = false
+        ui.menu.intro = '已提交选择，等待对局继续…'
+      }
+      syncUi()
+      return
+    }
+    resolveSnookerChoice(state, decision)
+    closeMenu()
+    syncUi()
+    maybeScheduleAi()
   }
 
   /* ---------- 音效 / 辅助线 ---------- */
@@ -367,6 +441,11 @@ export function useBilliards() {
       openOverlayForResult()
       return
     }
+    if (state.phase === 'choice' && state.sn?.choice) {
+      openFoulChoice()
+      if (state.sn.choice.seat === 1) scheduleAiFoulChoice()
+      return
+    }
     maybeScheduleAi()
   }
 
@@ -377,6 +456,7 @@ export function useBilliards() {
     engine.applyState(state)
     syncUi()
     if (state.phase === 'over' && ui.online.status === 'playing') openOverlayForResult()
+    else syncOnlineFoulChoice()
   }
 
   /* ---------- 联机 ---------- */
@@ -560,6 +640,15 @@ export function useBilliards() {
       syncUi()
     })
 
+    client.on('state', (message) => {
+      if (ui.online.status !== 'playing') return
+      if (engine.animating || engine.striking) {
+        pendingServer = message.state
+        return
+      }
+      applyServerState(message.state)
+    })
+
     client.on('peer', (message) => {
       if (message.event === 'joined') {
         ui.message = `${message.name || '对手'}加入了房间。`
@@ -585,6 +674,10 @@ export function useBilliards() {
     client.on('error', (message) => {
       ui.online.error = message.message || '联机服务出错了。'
       if (ui.online.status === 'connecting') ui.online.status = 'idle'
+      if (state?.phase === 'choice' && ui.menu.kind === 'foul-choice') {
+        ui.menu.mine = state.sn?.choice?.seat === ui.online.seat
+        ui.menu.intro = ui.online.error
+      }
     })
 
     client.on('disconnect', () => {
@@ -642,6 +735,7 @@ export function useBilliards() {
       setAiDifficulty,
       openMenu,
       resumeGame,
+      resolveFoulChoice,
       toggleGuide,
       toggleSettings,
       closeSettings,

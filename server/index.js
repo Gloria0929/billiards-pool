@@ -5,6 +5,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { createMatch, publicState, simulateShot } from '../src/game/match.js'
+import { resolveSnookerChoice } from '../src/game/rules.js'
 import { clamp } from '../src/game/constants.js'
 
 const PORT = Number(process.env.WS_PORT || 3210)
@@ -344,6 +345,29 @@ function handleMessage(ws, message) {
       shot,
       state: publicState(working),
     })
+    return
+  }
+
+  if (type === 'choice') {
+    if (!room.started || !room.state) {
+      send(ws, { type: 'error', message: '对局还没有开始。' })
+      return
+    }
+    const choice = room.state.sn?.choice
+    if (room.state.phase !== 'choice' || !choice) {
+      send(ws, { type: 'error', message: '现在没有需要处理的犯规选择。' })
+      return
+    }
+    if (ws.seat !== choice.seat) {
+      send(ws, { type: 'error', message: '还没轮到你选择。' })
+      return
+    }
+    const decision = message.decision === 'replay' ? 'replay' : 'play'
+    const working = structuredClone(room.state)
+    working.geo = room.state.geo
+    resolveSnookerChoice(working, decision)
+    room.state = working
+    broadcast(room, { type: 'state', state: publicState(working) })
     return
   }
 

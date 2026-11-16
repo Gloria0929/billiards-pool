@@ -135,12 +135,28 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
     firstHit: null,
     potted: [],
     cueIn: false,
-    sn: { score: [0, 0], onRed: true, idx: 0 },
+    sn: { score: [0, 0], onRed: true, idx: 0, finalColor: false, choice: null },
     phase: 'aim',
     message: `${(names && names[0]) || '玩家1'} 开球 · 拖动白球摆位，轻点台面瞄准`,
     winner: null,
     events: [],
     shotAnchor: null,
+  }
+}
+
+function captureShotStart(state) {
+  return {
+    balls: state.balls.map((b) => ({ n: b.n, x: b.x, y: b.y, on: b.on })),
+    turn: state.turn,
+    grp: [...state.grp],
+    inHand: state.inHand,
+    breakShot: state.breakShot,
+    canEight: state.canEight,
+    sn: {
+      onRed: state.sn.onRed,
+      idx: state.sn.idx,
+      finalColor: state.sn.finalColor,
+    },
   }
 }
 
@@ -178,6 +194,9 @@ export function launchShot(state, shot) {
     state.balls.every(
       (b) => !b.on || b.n === 0 || b.n === 8 || (b.n < 8 ? 'solid' : 'stripe') !== group,
     )
+
+  // 记录出杆前的球位与目标状态，供斯诺克犯规后的“重打 / 复位”使用。
+  state.shotStart = captureShotStart(state)
 
   const speed = (200 + power * 8300) / (1 + 0.9 * (spin.x * spin.x + spin.y * spin.y))
   const dx = Math.cos(angle)
@@ -243,6 +262,10 @@ export function publicState(state) {
       score: [...state.sn.score],
       onRed: state.sn.onRed,
       idx: state.sn.idx,
+      finalColor: !!state.sn.finalColor,
+      choice: state.sn.choice
+        ? { seat: state.sn.choice.seat, offender: state.sn.choice.offender }
+        : null,
     },
     phase: state.phase,
     message: state.message,
@@ -263,6 +286,9 @@ export function hydrateState(data) {
     b.m = b.m || 1
     b.mu = b.mu || 1
   })
+  state.sn = state.sn || { score: [0, 0], onRed: true, idx: 0 }
+  state.sn.finalColor = !!state.sn.finalColor
+  state.sn.choice = state.sn.choice || null
   return state
 }
 

@@ -78,6 +78,7 @@ function legalTargets(state, seat) {
     return state.sn.onRed
       ? reds
       : onTable.filter((ball) => ball.n >= 16)
+  if (state.sn.finalColor) return onTable.filter((ball) => ball.n >= 16)
   const nextColor = onTable.find((ball) => ball.n === 16 + state.sn.idx)
   return nextColor ? [nextColor] : []
 }

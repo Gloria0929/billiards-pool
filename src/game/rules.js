@@ -100,18 +100,68 @@ function endPool(state) {
   state.message = txt
 }
 
+function snookerTarget(state) {
+  if (redsOnTable(state) > 0)
+    return state.sn.onRed ? '红球' : '任意彩球'
+  if (state.sn.finalColor) return '任意彩球'
+  return ('黄绿棕蓝粉黑'[state.sn.idx] || '黑') + '球'
+}
+
+export function resolveSnookerChoice(state, decision) {
+  const choice = state.sn && state.sn.choice
+  if (!choice) return state
+  const snapshot = choice.snapshot
+  if (decision === 'replay' && snapshot) {
+    for (const saved of snapshot.balls) {
+      const ball = state.balls.find((b) => b.n === saved.n)
+      if (!ball) continue
+      ball.x = saved.x
+      ball.y = saved.y
+      ball.on = saved.on
+      ball.vx = ball.vy = ball.wx = ball.wy = ball.wz = 0
+      ball.st = 0
+      ball.q = null
+      ball.fallSpin = null
+    }
+    state.turn = snapshot.turn
+    state.grp = [...snapshot.grp]
+    state.inHand = snapshot.inHand
+    state.breakShot = snapshot.breakShot
+    state.canEight = snapshot.canEight
+    state.sn.onRed = snapshot.sn.onRed
+    state.sn.idx = snapshot.sn.idx
+    state.sn.finalColor = snapshot.sn.finalColor
+    state.message = `${playerLabel(
+      state,
+      state.turn,
+    )}重打 · 球位已恢复 · 目标:${snookerTarget(state)}`
+  } else {
+    state.turn = choice.seat
+    state.message = `${playerLabel(
+      state,
+      choice.seat,
+    )}击球 · 目标:${snookerTarget(state)}`
+  }
+  state.sn.choice = null
+  state.phase = 'aim'
+  state.firstHit = null
+  state.potted = []
+  state.cueIn = false
+  return state
+}
+
 function endSnooker(state) {
   const { geo } = state
   const me = state.turn
   const op = 1 - me
   state.breakShot = false
-  const redsLeft =
-    redsOnTable(state) + state.potted.filter((n) => n <= 15).length > 0
+  const pottedReds = state.potted.filter((n) => n <= 15).length
+  const redsAtStart = redsOnTable(state) + pottedReds > 0
+  const finalColor = !!state.sn.finalColor
   const nextColor = 16 + state.sn.idx
   const first = state.firstHit
 
   let foul = state.cueIn || first === null
-  let foulValue = 4
   let why = state.cueIn
     ? '白球落袋'
     : first === null
@@ -120,18 +170,40 @@ function endSnooker(state) {
   let points = 0
   let txt = ''
 
-  if (
-    first !== null &&
-    !(redsLeft ? (state.sn.onRed ? first <= 15 : first >= 16) : first === nextColor)
-  ) {
-    foul = true
-    foulValue = Math.max(foulValue, colorValue(first))
-    why = '先碰了错误的球'
+  // 犯规罚分：球在值、先碰球、落袋球三者取最大，最低 4 分。
+  const ballOnValue = redsAtStart
+    ? state.sn.onRed
+      ? 1
+      : 4
+    : finalColor
+      ? 4
+      : colorValue(nextColor)
+  let foulValue = Math.max(4, ballOnValue)
+
+  if (first !== null) {
+    const legalFirst = redsAtStart
+      ? state.sn.onRed
+        ? first <= 15
+        : first >= 16
+      : finalColor
+        ? first >= 16
+        : first === nextColor
+    if (!legalFirst) {
+      foul = true
+      foulValue = Math.max(foulValue, colorValue(first))
+      why = '先碰了错误的球'
+    }
   }
 
   for (const n of state.potted) {
-    if (redsLeft ? (state.sn.onRed ? n <= 15 : n === first) : n === nextColor)
-      points += colorValue(n)
+    const legal = redsAtStart
+      ? state.sn.onRed
+        ? n <= 15
+        : n === first && n >= 16
+      : finalColor
+        ? n === first && n >= 16
+        : n === nextColor
+    if (legal) points += colorValue(n)
     else {
       foul = true
       foulValue = Math.max(foulValue, colorValue(n))
@@ -139,46 +211,84 @@ function endSnooker(state) {
     }
   }
 
+  // 彩球复位：红球阶段、最后一颗红球后的那颗彩球、以及犯规打进的彩球。
   for (const n of state.potted)
-    if (n >= 16 && (redsLeft || foul))
+    if (n >= 16 && (redsAtStart || finalColor || foul))
       place(geo, state.balls, state.balls.find((b) => b.n === n), ...colorSpot(geo, n))
   if (state.cueIn) place(geo, state.balls, state.balls[0], ...cueSpot(geo))
 
-  const last = !redsLeft && state.potted.includes(21)
   if (foul) {
     state.sn.score[op] += foulValue
     state.turn = op
-    state.sn.onRed = true
     state.inHand = state.cueIn
+    if (redsOnTable(state) > 0) {
+      state.sn.onRed = true
+      state.sn.finalColor = false
+    } else {
+      state.sn.onRed = false
+      if (redsAtStart || finalColor) {
+        // 红球阶段或最后一颗红球后的彩球阶段犯规：从黄球重新开始。
+        state.sn.idx = 0
+        state.sn.finalColor = false
+      }
+    }
     txt = `犯规:${why},${playerLabel(state, op)}得${foulValue}分`
+    state.sn.choice = state.shotStart
+      ? { seat: op, offender: me, snapshot: state.shotStart }
+      : null
+    if (state.sn.choice) txt += ' · 可选择自己击球或让对手重打'
+    state.phase = state.sn.choice ? 'choice' : 'aim'
   } else {
     state.sn.score[me] += points
-    if (state.potted.length) {
-      if (redsLeft) state.sn.onRed = !state.sn.onRed
-      else state.sn.idx++
-      txt = `进球+${points}分,继续击球`
+    if (redsAtStart) {
+      if (state.sn.onRed) {
+        if (state.potted.some((n) => n <= 15)) {
+          state.sn.finalColor =
+            redsOnTable(state) === 0
+          state.sn.onRed = false
+          txt = `进球+${points}分,继续击球`
+        } else {
+          state.turn = op
+          state.sn.onRed = true
+          txt = `未进球,轮到${playerLabel(state, op)}`
+        }
+      } else if (state.potted.length) {
+        state.sn.onRed = true
+        state.sn.finalColor = false
+        txt = `进球+${points}分,继续击球`
+      } else {
+        state.turn = op
+        state.sn.onRed = true
+        txt = `未进球,轮到${playerLabel(state, op)}`
+      }
+    } else if (finalColor) {
+      state.sn.finalColor = false
+      state.sn.idx = 0
+      state.sn.onRed = false
+      if (state.potted.length) txt = `进球+${points}分,继续击球`
+      else {
+        state.turn = op
+        txt = `未进球,轮到${playerLabel(state, op)}`
+      }
+    } else if (state.potted.includes(nextColor)) {
+      state.sn.idx++
+      if (state.sn.idx <= 5) txt = `进球+${points}分,继续击球`
     } else {
       state.turn = op
-      state.sn.onRed = true
       txt = `未进球,轮到${playerLabel(state, op)}`
     }
+    state.sn.choice = null
+    state.phase = 'aim'
   }
 
-  if (last || state.sn.idx > 5) {
+  if (state.sn.idx > 5) {
     const a = state.sn.score[0]
     const b = state.sn.score[1]
     finish(state, a === b ? -1 : a > b ? 0 : 1, `${a} : ${b}`)
     return
   }
 
-  state.message =
-    txt +
-    ' · 目标:' +
-    (redsOnTable(state) > 0
-      ? state.sn.onRed
-        ? '红球'
-        : '任意彩球'
-      : '黄绿棕蓝粉黑'[state.sn.idx] + '球')
+  state.message = txt + ' · 目标:' + snookerTarget(state)
 }
 
 export function endShot(state) {

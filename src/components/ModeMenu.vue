@@ -174,6 +174,21 @@ const rematchText = computed(() => {
         <OnlinePanel v-else :ui="ui" :actions="actions" />
       </template>
 
+      <template v-else-if="ui.menu.kind === 'foul-choice'">
+        <div v-if="ui.menu.mine" class="room-actions">
+          <button id="foul-play" @click="actions.resolveFoulChoice('play')">
+            自己击球
+          </button>
+          <button
+            id="foul-replay"
+            @click="actions.resolveFoulChoice('replay')"
+          >
+            让对手重打
+          </button>
+        </div>
+        <p v-else class="rematch-note">等待对手选择…</p>
+      </template>
+
       <template v-else-if="ui.menu.kind === 'online'">
         <OnlinePanel :ui="ui" :actions="actions" />
       </template>
