@@ -11,6 +11,13 @@ import {
   snookerPointsRemaining,
 } from '../src/game/rules.js'
 import { clamp } from '../src/game/constants.js'
+import {
+  advanceSeries,
+  createSeries,
+  normalizeBestOf,
+  publicSeries,
+  recordFrameResult,
+} from '../src/game/series.js'
 
 const PORT = Number(process.env.WS_PORT || 3210)
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -108,6 +115,8 @@ function roomPayload(room, seat) {
     hostSeat: 0,
     started: room.started,
     guide: room.guide,
+    visibility: room.visibility,
+    match: publicSeries(room.match),
     players: room.names.map((name, index) => ({
       seat: index,
       name: name || null,
@@ -145,21 +154,82 @@ function cleanName(name) {
   return text.slice(0, 12) || '球友'
 }
 
+function cancelPending(ws) {
+  const pending = ws.pending
+  if (!pending) return
+  ws.pending = null
+  const room = rooms.get(pending.code)
+  if (!room) return
+  if (room.requests.delete(pending.id)) {
+    send(room.clients[0], { type: 'join-request-cancelled', id: pending.id })
+  }
+}
+
+function denyPending(room, message) {
+  for (const [id, request] of room.requests) {
+    send(request.ws, { type: 'join-denied', message })
+    send(room.clients[0], { type: 'join-request-cancelled', id })
+    if (request.ws.pending?.id === id) request.ws.pending = null
+  }
+  room.requests.clear()
+}
+
+function makeRequestId() {
+  return Math.random().toString(36).slice(2, 10)
+}
+
+function publicRoomList() {
+  const list = []
+  for (const room of rooms.values()) {
+    if (room.visibility !== 'public' || room.started) continue
+    if (!room.clients[0] || room.clients[1]) continue
+    list.push({
+      code: room.code,
+      mode: room.mode,
+      host: room.names[0],
+      guide: room.guide,
+      bestOf: room.match.bestOf,
+      players: 1,
+    })
+    if (list.length >= 50) break
+  }
+  return list
+}
+
+function recordMatchResult(room) {
+  if (!room.started || !room.state || room.state.phase !== 'over') return false
+  const changed = recordFrameResult(room.match, room.state.winner)
+  if (changed) broadcastRoom(room)
+  return changed
+}
+
 function leaveRoom(ws, notify = true) {
+  cancelPending(ws)
   const room = ws.room
   if (!room) return
   const seat = ws.seat
   if (room.clients[seat] === ws) room.clients[seat] = null
   ws.room = null
   ws.seat = null
-  const other = room.clients[1 - seat]
+  if (seat === 0) {
+    // 房主离开即关闭房间，避免留下无法审批的公开房。
+    const other = room.clients[1]
+    if (other) {
+      send(other, { type: 'room-closed', message: '房主已离开，房间已关闭。' })
+      other.room = null
+      other.seat = null
+    }
+    denyPending(room, '房主已离开，房间已关闭。')
+    room.clients = [null, null]
+    rooms.delete(room.code)
+    return
+  }
+  const other = room.clients[0]
   if (notify) {
     if (other) send(other, { type: 'peer', event: 'left' })
     broadcastRoom(room)
   }
-  if (!room.clients[0] && !room.clients[1]) {
-    rooms.delete(room.code)
-  }
+  if (!room.clients[0] && !room.clients[1]) rooms.delete(room.code)
 }
 
 function newMatch(room) {
@@ -167,7 +237,21 @@ function newMatch(room) {
   room.state = createMatch(room.mode, seed, room.names)
   room.started = true
   room.rematch = [false, false]
+  room.match.recorded = false
   return publicState(room.state)
+}
+
+function seatGuest(ws, room, name) {
+  const seat = room.clients[0] ? 1 : 0
+  room.clients[seat] = ws
+  room.names[seat] = name
+  ws.room = room
+  ws.seat = seat
+  broadcastRoom(room)
+  room.clients.forEach((client, index) => {
+    if (client && index !== seat)
+      send(client, { type: 'peer', event: 'joined', name: room.names[seat] })
+  })
 }
 
 function sanitizeShot(raw) {
@@ -243,6 +327,8 @@ function handleMessage(ws, message) {
       return
     }
     const mode = message.mode === 'snk' ? 'snk' : 'pool'
+    const visibility = message.visibility === 'private' ? 'private' : 'public'
+    const bestOf = normalizeBestOf(message.bestOf)
     const code = makeCode()
     if (!code) {
       send(ws, { type: 'error', message: '无法创建房间，请稍后再试。' })
@@ -251,12 +337,16 @@ function handleMessage(ws, message) {
     const room = {
       code,
       mode,
+      visibility,
+      bestOf,
       names: [cleanName(message.name), null],
       clients: [ws, null],
       state: null,
       started: false,
       guide: message.guide !== false,
       rematch: [false, false],
+      match: createSeries(bestOf),
+      requests: new Map(),
     }
     rooms.set(code, room)
     ws.room = room
@@ -267,12 +357,12 @@ function handleMessage(ws, message) {
 
   if (type === 'join') {
     const code = String(message.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
-    const room = rooms.get(code)
-    if (!room) {
+    let room = rooms.get(code)
+    if (!room || !room.clients[0]) {
       send(ws, { type: 'error', message: '没有找到这个房间，请检查房间码。' })
       return
     }
-    if (room.clients[0] && room.clients[1]) {
+    if (room.clients[1]) {
       send(ws, { type: 'error', message: '房间已满。' })
       return
     }
@@ -281,22 +371,73 @@ function handleMessage(ws, message) {
       return
     }
     leaveRoom(ws)
-    const seat = room.clients[0] ? 1 : 0
-    room.clients[seat] = ws
-    room.names[seat] = cleanName(message.name)
-    ws.room = room
-    ws.seat = seat
-    broadcastRoom(room)
-    room.clients.forEach((client, index) => {
-      if (client && index !== seat)
-        send(client, { type: 'peer', event: 'joined', name: room.names[seat] })
-    })
+    room = rooms.get(code)
+    if (!room || !room.clients[0] || room.clients[1] || room.started) {
+      send(ws, { type: 'error', message: '房间已关闭或已满。' })
+      return
+    }
+    if (room.visibility === 'public') {
+      if (room.requests.size >= 5) {
+        send(ws, { type: 'error', message: '房主正在处理其他申请，请稍后再试。' })
+        return
+      }
+      const id = makeRequestId()
+      const name = cleanName(message.name)
+      room.requests.set(id, { id, ws, name })
+      ws.pending = { code: room.code, id }
+      send(ws, { type: 'join-pending', code: room.code })
+      send(room.clients[0], { type: 'join-request', id, name, code: room.code })
+      return
+    }
+    seatGuest(ws, room, cleanName(message.name))
+    return
+  }
+
+  if (type === 'rooms') {
+    send(ws, { type: 'rooms', rooms: publicRoomList() })
+    return
+  }
+
+  if (type === 'cancel-join') {
+    cancelPending(ws)
     return
   }
 
   const room = ws.room
   if (!room) {
     send(ws, { type: 'error', message: '还没有加入房间。' })
+    return
+  }
+
+  if (type === 'respond') {
+    if (ws.seat !== 0) {
+      send(ws, { type: 'error', message: '只有房主可以处理加入申请。' })
+      return
+    }
+    const id = String(message.id || '')
+    const request = room.requests.get(id)
+    if (!request) return
+    room.requests.delete(id)
+    send(ws, { type: 'join-request-resolved', id })
+    if (!message.accept) {
+      send(request.ws, { type: 'join-denied', message: '房主拒绝了你的加入申请。' })
+      if (request.ws.pending?.id === id) request.ws.pending = null
+      return
+    }
+    if (
+      room.started ||
+      !room.clients[0] ||
+      room.clients[1] ||
+      request.ws.readyState !== 1
+    ) {
+      send(request.ws, { type: 'join-denied', message: '房间已满或对局已经开始。' })
+      if (request.ws.pending?.id === id) request.ws.pending = null
+      return
+    }
+    const guest = request.ws
+    guest.pending = null
+    seatGuest(guest, room, request.name)
+    denyPending(room, '房间已满。')
     return
   }
 
@@ -315,13 +456,24 @@ function handleMessage(ws, message) {
       send(ws, { type: 'error', message: '只有房主可以开始对局。' })
       return
     }
+    if (room.started) {
+      send(ws, { type: 'error', message: '对局已经开始了。' })
+      return
+    }
     if (!room.clients[0] || !room.clients[1]) {
       send(ws, { type: 'error', message: '等待另一位玩家加入。' })
       return
     }
+    denyPending(room, '房主已经开始对局。')
+    room.match = createSeries(room.bestOf)
     const state = newMatch(room)
     broadcastRoom(room)
-    broadcast(room, { type: 'start', state, guide: room.guide })
+    broadcast(room, {
+      type: 'start',
+      state,
+      guide: room.guide,
+      match: publicSeries(room.match),
+    })
     return
   }
 
@@ -347,11 +499,13 @@ function handleMessage(ws, message) {
     working.geo = room.state.geo
     simulateShot(working, shot)
     room.state = working
+    recordMatchResult(room)
     broadcast(room, {
       type: 'shot',
       seat: ws.seat,
       shot,
       state: publicState(working),
+      match: publicSeries(room.match),
     })
     return
   }
@@ -400,7 +554,12 @@ function handleMessage(ws, message) {
     working.geo = room.state.geo
     resolveSnookerChoice(working, decision, freeBall)
     room.state = working
-    broadcast(room, { type: 'state', state: publicState(working) })
+    recordMatchResult(room)
+    broadcast(room, {
+      type: 'state',
+      state: publicState(working),
+      match: publicSeries(room.match),
+    })
     return
   }
 
@@ -429,7 +588,12 @@ function handleMessage(ws, message) {
     working.geo = room.state.geo
     concedeFrame(working, ws.seat)
     room.state = working
-    broadcast(room, { type: 'state', state: publicState(working) })
+    recordMatchResult(room)
+    broadcast(room, {
+      type: 'state',
+      state: publicState(working),
+      match: publicSeries(room.match),
+    })
     return
   }
 
@@ -438,12 +602,19 @@ function handleMessage(ws, message) {
       send(ws, { type: 'error', message: '本局还没有结束。' })
       return
     }
+    recordMatchResult(room)
     room.rematch[ws.seat] = true
     broadcastRoom(room)
     if (room.rematch[0] && room.rematch[1]) {
+      advanceSeries(room.match)
       const state = newMatch(room)
       broadcastRoom(room)
-      broadcast(room, { type: 'start', state, guide: room.guide })
+      broadcast(room, {
+        type: 'start',
+        state,
+        guide: room.guide,
+        match: publicSeries(room.match),
+      })
     }
     return
   }

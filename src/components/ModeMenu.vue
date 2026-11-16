@@ -1,6 +1,8 @@
 <script setup>
 import { computed, ref } from "vue";
 import OnlinePanel from "./OnlinePanel.vue";
+import GameLobby from "./GameLobby.vue";
+import { MATCH_FORMATS, formatLabel } from "../game/series.js";
 
 const props = defineProps({
   ui: { type: Object, required: true },
@@ -29,16 +31,18 @@ const freeBallColors = computed(() => {
     .map((ball) => ({ n: ball.n, label: SNK_NAMES[ball.n - 16] }))
 });
 
-const summary = computed(() =>
-  props.ui.selectedMode === "pool"
-    ? "已选中式八球 · 清完本组，再打黑八"
-    : "已选斯诺克 · 红彩交替，累计得分",
-);
+const summary = computed(() => {
+  const base =
+    props.ui.selectedMode === "pool"
+      ? "已选中式八球 · 清完本组，再打黑八"
+      : "已选斯诺克 · 红彩交替，累计得分";
+  return props.ui.bestOf > 1 ? `${base} · ${formatLabel(props.ui.bestOf)}` : base;
+});
 const startLabel = computed(() =>
   props.ui.selectedMode === "pool" ? "开始游戏 →" : "开始游戏 →",
 );
 const showModes = computed(() =>
-  ["start", "paused", "over"].includes(props.ui.menu.kind),
+  ["start", "paused"].includes(props.ui.menu.kind),
 );
 const meReady = computed(
   () =>
@@ -53,8 +57,40 @@ const opponentReady = computed(
 const rematchText = computed(() => {
   if (meReady.value) return "已准备，等待对手…";
   if (opponentReady.value) return "对手已经准备好，就等你了。";
-  return "双方都点击「再来一局」后，会重新摆球开始新一局。";
+  if ((props.ui.match?.bestOf || 1) === 1)
+    return "双方都点击「再来一局」后，会重新摆球开始新一局。";
+  if (props.ui.match?.over) return "双方都点击「再来一场」后，开始新一场比赛。";
+  return "双方都点击「下一局」后，进入下一局。";
 });
+const replayLabel = computed(() => {
+  if (meReady.value) return "已准备，等待对手";
+  if ((props.ui.match?.bestOf || 1) === 1) return "再来一局";
+  if (props.ui.match?.over) return "再来一场";
+  return "下一局";
+});
+const localReplayLabel = computed(() => {
+  if ((props.ui.match?.bestOf || 1) === 1) return "再来一局";
+  if (props.ui.match?.over) return "再来一场";
+  return "下一局";
+});
+const panelTitle = computed(() => {
+  if (props.ui.menu.kind !== "start") return props.ui.menu.title;
+  if (tab.value === "lobby") return "球友在大厅等你。";
+  if (tab.value === "online") return "开一桌，或加入朋友。";
+  return props.ui.menu.title;
+});
+const panelIntro = computed(() => {
+  if (props.ui.menu.kind !== "start") return props.ui.menu.intro;
+  if (tab.value === "lobby")
+    return "浏览公开房间，选一桌申请加入；房主同意后即可开局。";
+  if (tab.value === "online")
+    return "创建公开或私有房间，也可以输入朋友发来的房间码。";
+  return props.ui.menu.intro;
+});
+function openOnlineFromLobby() {
+  props.actions.setRoomVisibility("public");
+  tab.value = "online";
+}
 </script>
 
 <template>
@@ -67,8 +103,8 @@ const rematchText = computed(() => {
   >
     <section class="mode-panel">
       <p class="eyebrow">THE BILLIARDS ROOM</p>
-      <h1 id="ovt">{{ ui.menu.title }}</h1>
-      <p class="intro">{{ ui.menu.intro }}</p>
+      <h1 id="ovt">{{ panelTitle }}</h1>
+      <p class="intro">{{ panelIntro }}</p>
 
       <template v-if="showModes">
         <div class="mode-tabs" role="tablist" aria-label="对局方式">
@@ -78,6 +114,13 @@ const rematchText = computed(() => {
             @click="tab = 'local'"
           >
             人机对战
+          </button>
+          <button
+            role="tab"
+            :aria-pressed="tab === 'lobby'"
+            @click="tab = 'lobby'"
+          >
+            游戏大厅
           </button>
           <button
             role="tab"
@@ -137,37 +180,56 @@ const rematchText = computed(() => {
               <span class="mode-meta">22 颗球 · 积分较量 · 精准控球</span>
             </button>
           </div>
-          <div class="difficulty-row" aria-label="电脑难度">
-            <span>电脑难度</span>
-            <div class="difficulty-options">
-              <button
-                id="diff-easy"
-                :aria-pressed="ui.aiDifficulty === 'easy'"
-                @click="actions.setAiDifficulty('easy')"
-              >
-                简单
-              </button>
-              <button
-                id="diff-normal"
-                :aria-pressed="ui.aiDifficulty === 'normal'"
-                @click="actions.setAiDifficulty('normal')"
-              >
-                普通
-              </button>
-              <button
-                id="diff-hard"
-                :aria-pressed="ui.aiDifficulty === 'hard'"
-                @click="actions.setAiDifficulty('hard')"
-              >
-                困难
-              </button>
+          <div class="setup-card">
+            <div class="setup-top">
+              <div class="difficulty-row" aria-label="电脑难度">
+                <span class="setup-label">电脑难度</span>
+                <div class="difficulty-options">
+                  <button
+                    id="diff-easy"
+                    :aria-pressed="ui.aiDifficulty === 'easy'"
+                    @click="actions.setAiDifficulty('easy')"
+                  >
+                    简单
+                  </button>
+                  <button
+                    id="diff-normal"
+                    :aria-pressed="ui.aiDifficulty === 'normal'"
+                    @click="actions.setAiDifficulty('normal')"
+                  >
+                    普通
+                  </button>
+                  <button
+                    id="diff-hard"
+                    :aria-pressed="ui.aiDifficulty === 'hard'"
+                    @click="actions.setAiDifficulty('hard')"
+                  >
+                    困难
+                  </button>
+                </div>
+              </div>
+              <div class="difficulty-row" aria-label="赛制">
+                <span class="setup-label">赛制</span>
+                <div class="difficulty-options">
+                  <button
+                    v-for="format in MATCH_FORMATS"
+                    :key="format"
+                    :aria-pressed="ui.bestOf === format"
+                    @click="actions.setBestOf(format)"
+                  >
+                    {{ formatLabel(format) }}
+                  </button>
+                </div>
+              </div>
             </div>
+            <p class="difficulty-note">{{ difficultyNote }}</p>
           </div>
-          <p class="difficulty-note">{{ difficultyNote }}</p>
           <div class="mode-footer">
             <p>
               <span id="mode-summary">{{ summary }}</span
-              ><br />你与电脑轮流击球 · 支持鼠标与触屏
+              ><br /><span class="footer-hint"
+                >你与电脑轮流击球 · 支持鼠标与触屏</span
+              >
             </p>
             <button id="start" @click="actions.startLocal">
               {{ startLabel }}
@@ -181,6 +243,13 @@ const rematchText = computed(() => {
             返回当前对局
           </button>
         </template>
+
+        <GameLobby
+          v-else-if="tab === 'lobby'"
+          :ui="ui"
+          :actions="actions"
+          @create="openOnlineFromLobby"
+        />
 
         <OnlinePanel v-else :ui="ui" :actions="actions" />
       </template>
@@ -237,6 +306,27 @@ const rematchText = computed(() => {
         <OnlinePanel :ui="ui" :actions="actions" />
       </template>
 
+      <template v-else-if="ui.menu.kind === 'local-over'">
+        <p class="final-score">
+          <span v-if="ui.mode === 'snk'">
+            {{ ui.scores[0] }} : {{ ui.scores[1] }}
+          </span>
+          <span v-else
+            >{{ ui.names?.[ui.winner] || "玩家" + (ui.winner + 1) }} 获胜</span
+          >
+        </p>
+        <p v-if="ui.match.bestOf > 1" class="match-line">
+          第 {{ ui.match.frame }} 局 · 局分 {{ ui.match.wins[0] }} :
+          {{ ui.match.wins[1] }} · {{ formatLabel(ui.match.bestOf) }}
+        </p>
+        <div class="room-actions">
+          <button id="local-again" @click="actions.playAgainLocal">
+            {{ localReplayLabel }}
+          </button>
+          <button @click="actions.exitToHome">退出</button>
+        </div>
+      </template>
+
       <template v-else-if="ui.menu.kind === 'online-over'">
         <p class="final-score">
           <span v-if="ui.mode === 'snk'">
@@ -246,13 +336,17 @@ const rematchText = computed(() => {
             >{{ ui.names?.[ui.winner] || "玩家" + (ui.winner + 1) }} 获胜</span
           >
         </p>
+        <p v-if="ui.match.bestOf > 1" class="match-line">
+          第 {{ ui.match.frame }} 局 · 局分 {{ ui.match.wins[0] }} :
+          {{ ui.match.wins[1] }} · {{ formatLabel(ui.match.bestOf) }}
+        </p>
         <div class="room-actions">
           <button
             id="start-online"
             :disabled="meReady"
             @click="actions.requestRematch"
           >
-            {{ meReady ? "已准备，等待对手" : "再来一局" }}
+            {{ replayLabel }}
           </button>
           <button @click="actions.backToLobby">返回大厅</button>
         </div>

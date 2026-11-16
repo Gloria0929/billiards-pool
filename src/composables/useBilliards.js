@@ -3,6 +3,13 @@ import { BilliardsEngine } from '../game/engine.js'
 import { createMatch, hydrateState, snapshot } from '../game/match.js'
 import { concedeFrame, endShot, resolveSnookerChoice, snookerPointsRemaining } from '../game/rules.js'
 import { MODES } from '../game/constants.js'
+import {
+  advanceSeries,
+  createSeries,
+  normalizeBestOf,
+  publicSeries,
+  recordFrameResult,
+} from '../game/series.js'
 import { chooseAiShot } from '../game/ai.js'
 import * as audio from '../game/audio.js'
 import { NetClient } from '../net/client.js'
@@ -10,6 +17,7 @@ import { NetClient } from '../net/client.js'
 const STORAGE_NAME = 'billiards-name'
 const STORAGE_GUIDE = 'billiards-guide'
 const STORAGE_DIFFICULTY = 'billiards-difficulty'
+const STORAGE_BESTOF = 'billiards-bestof'
 const AI_DIFFICULTIES = ['easy', 'normal', 'hard']
 const AI_DIFFICULTY_LABELS = { easy: '简单', normal: '普通', hard: '困难' }
 
@@ -24,6 +32,8 @@ export function useBilliards() {
   let lastAimPayload = ''
   let lastAimTurn = null
   let aiTimer = null
+  let connectPromise = null
+  let localSeries = createSeries(1)
 
   const ui = reactive({
     ready: false,
@@ -49,6 +59,8 @@ export function useBilliards() {
     view: 'orbit',
     showGuide: true,
     aiDifficulty: 'normal',
+    bestOf: 1,
+    match: publicSeries(createSeries(1)),
     canShoot: false,
     canConcede: false,
     modeLabel: '中式八球 · 本地双人',
@@ -61,6 +73,7 @@ export function useBilliards() {
     },
     online: {
       status: 'idle',
+      connected: false,
       code: '',
       seat: null,
       players: [],
@@ -70,6 +83,10 @@ export function useBilliards() {
       waiting: false,
       rematch: [false, false],
       guide: true,
+      visibility: 'public',
+      rooms: [],
+      requests: [],
+      closedNotice: '',
     },
     audio: { volume: 0.7, muted: false, unavailable: false },
     settingsOpen: false,
@@ -86,6 +103,11 @@ export function useBilliards() {
     try {
       const saved = localStorage.getItem(STORAGE_DIFFICULTY)
       if (AI_DIFFICULTIES.includes(saved)) ui.aiDifficulty = saved
+    } catch (_) {}
+    try {
+      const saved = Number(localStorage.getItem(STORAGE_BESTOF))
+      ui.bestOf = normalizeBestOf(saved)
+      localSeries = createSeries(ui.bestOf)
     } catch (_) {}
     ui.online.guide = ui.showGuide
 
@@ -165,6 +187,7 @@ export function useBilliards() {
     ui.snookerOnRed = snap.onRed
     ui.snookerColorIndex = snap.colorIndex
     ui.snookerFinalColor = snap.finalColor
+    if (ui.online.status === 'idle') ui.match = publicSeries(localSeries)
     ui.names = snap.names
     ui.balls = snap.balls
     ui.message = snap.message
@@ -213,12 +236,33 @@ export function useBilliards() {
   }
 
   function openOverlayForResult() {
-    const online = ui.online.status === 'playing'
-    showMenu(
-      online ? 'online-over' : 'over',
-      state.message || '本局结束',
-      online ? '本局已结束，双方都选择再来一局即可重新开球。' : '本局已结束，选择玩法开始下一局。',
-    )
+    if (ui.online.status === 'playing') {
+      const match = ui.match
+      const extra =
+        match.bestOf > 1
+          ? `${match.over ? '比赛结束' : `第 ${match.frame} 局结束`} · 局分 ${match.wins[0]} : ${match.wins[1]}`
+          : '本局已结束'
+      showMenu(
+        'online-over',
+        state.message || '本局结束',
+        `${extra}。双方都准备后${
+          match.over
+            ? '开始新一场比赛'
+            : match.bestOf > 1
+              ? '进入下一局'
+              : '重新开球'
+        }。`,
+      )
+      return
+    }
+    recordFrameResult(localSeries, state.winner)
+    syncUi()
+    const match = ui.match
+    const extra =
+      match.bestOf > 1
+        ? `${match.over ? '比赛结束' : `第 ${match.frame} 局结束`} · 局分 ${match.wins[0]} : ${match.wins[1]}`
+        : '本局已结束'
+    showMenu('local-over', state.message || '本局结束', `${extra}。`)
   }
 
   /* ---------- 本地对局 ---------- */
@@ -228,8 +272,13 @@ export function useBilliards() {
   }
 
   function startLocal() {
-    clearAiTimer()
     if (ui.online.status !== 'idle') leaveRoom(true)
+    localSeries = createSeries(ui.bestOf)
+    startLocalFrame()
+  }
+
+  function startLocalFrame() {
+    clearAiTimer()
     audio.ensureAudio()
     const seed = (Math.random() * 2 ** 32) >>> 0
     state = createMatch(ui.selectedMode, seed, ['你', '电脑'])
@@ -238,6 +287,28 @@ export function useBilliards() {
     closeMenu()
     syncUi()
     maybeScheduleAi()
+  }
+
+  function playAgainLocal() {
+    if (ui.online.status !== 'idle') return
+    advanceSeries(localSeries)
+    startLocalFrame()
+  }
+
+  function exitToHome() {
+    if (ui.online.status !== 'idle') {
+      leaveRoom()
+      return
+    }
+    clearAiTimer()
+    const preview = createMatch(ui.selectedMode)
+    state = preview
+    engine?.loadMatch(state)
+    showMenu(
+      'start',
+      '选一张球桌，开局。',
+      '一杆的手感，一局的较量。选择你想玩的台球。',
+    )
   }
 
   function openMenu() {
@@ -556,13 +627,24 @@ export function useBilliards() {
   }
 
   function ensureConnected() {
-    if (ui.online.status === 'connecting') return Promise.resolve()
+    if (net?.ws?.readyState === 1) return Promise.resolve()
+    if (connectPromise) return connectPromise
     ui.online.status = 'connecting'
     ui.online.error = ''
-    return net.connect().catch(() => {
-      ui.online.status = 'idle'
-      throw new Error('connect failed')
-    })
+    connectPromise = net.connect()
+      .then(() => {
+        ui.online.connected = true
+        if (ui.online.status === 'connecting') ui.online.status = 'idle'
+      })
+      .catch(() => {
+        ui.online.status = 'idle'
+        ui.online.connected = false
+        throw new Error('connect failed')
+      })
+      .finally(() => {
+        connectPromise = null
+      })
+    return connectPromise
   }
 
   function createRoom() {
@@ -573,6 +655,8 @@ export function useBilliards() {
           mode: ui.selectedMode,
           name: ui.online.name,
           guide: ui.online.guide,
+          visibility: ui.online.visibility,
+          bestOf: ui.bestOf,
         })
       })
       .catch(() => {})
@@ -597,6 +681,38 @@ export function useBilliards() {
   function startOnline() {
     if (ui.online.status !== 'room') return
     net.send({ type: 'start' })
+  }
+
+  function requestRooms() {
+    if (ui.online.status !== 'idle') return
+    ensureConnected()
+      .then(() => net.send({ type: 'rooms' }))
+      .catch(() => {})
+  }
+
+  function respondJoinRequest(id, accept) {
+    if (ui.online.status !== 'room' || ui.online.seat !== 0) return
+    net.send({ type: 'respond', id, accept: !!accept })
+  }
+
+  function cancelJoinRequest() {
+    if (ui.online.status !== 'requesting') return
+    net.send({ type: 'cancel-join' })
+    ui.online.status = 'idle'
+    ui.online.error = ''
+  }
+
+  function setBestOf(value) {
+    const best = normalizeBestOf(value)
+    ui.bestOf = best
+    try {
+      localStorage.setItem(STORAGE_BESTOF, String(best))
+    } catch (_) {}
+  }
+
+  function setRoomVisibility(value) {
+    if (!['idle', 'connecting'].includes(ui.online.status)) return
+    ui.online.visibility = value === 'private' ? 'private' : 'public'
   }
 
   function requestRematch() {
@@ -624,13 +740,16 @@ export function useBilliards() {
     if (!silent) net?.send({ type: 'leave' })
     net?.close()
     ui.online.status = 'idle'
+    ui.online.connected = false
     ui.online.code = ''
     ui.online.seat = null
     ui.online.players = []
     ui.online.rematch = [false, false]
+    ui.online.requests = []
     ui.online.opponentLeft = false
     ui.online.waiting = false
     ui.online.error = ''
+    ui.online.closedNotice = ''
     pendingServer = null
     lastAimPayload = ''
     lastAimTurn = null
@@ -657,6 +776,11 @@ export function useBilliards() {
       ui.online.players = message.players
       ui.online.rematch = message.rematch || [false, false]
       ui.online.guide = message.guide !== false
+      ui.online.visibility =
+        message.visibility === 'private' ? 'private' : 'public'
+      ui.online.requests = []
+      ui.online.connected = true
+      if (message.match) ui.match = publicSeries(message.match)
       ui.online.error = ''
       ui.selectedMode = message.mode
       ui.online.status = message.started ? 'playing' : 'room'
@@ -665,7 +789,9 @@ export function useBilliards() {
         ui.menu.title = message.seat === 0 ? '房间已创建。' : `已加入 ${message.code} 房间。`
         ui.menu.intro =
           message.players.filter((player) => player.connected).length < 2
-            ? `把房间码 ${message.code} 发给朋友，等他加入。`
+            ? message.visibility === 'public'
+              ? '公开房间已上线，等待大厅里的球友申请加入。'
+              : `把房间码 ${message.code} 发给朋友，等他加入。`
             : '双方已就位，房主可以开始比赛。'
         ui.online.name = message.players[message.seat]?.name || ui.online.name
         ui.menu.visible = true
@@ -674,9 +800,78 @@ export function useBilliards() {
       syncUi()
     })
 
+    client.on('rooms', (message) => {
+      ui.online.rooms = Array.isArray(message.rooms) ? message.rooms : []
+    })
+
+    client.on('join-request', (message) => {
+      if (ui.online.seat !== 0) return
+      const item = {
+        id: message.id,
+        name: message.name,
+        code: message.code,
+      }
+      ui.online.requests = [
+        ...ui.online.requests.filter((request) => request.id !== item.id),
+        item,
+      ].slice(-5)
+    })
+
+    client.on('join-request-resolved', (message) => {
+      ui.online.requests = ui.online.requests.filter(
+        (request) => request.id !== message.id,
+      )
+    })
+
+    client.on('join-request-cancelled', (message) => {
+      ui.online.requests = ui.online.requests.filter(
+        (request) => request.id !== message.id,
+      )
+    })
+
+    client.on('join-pending', (message) => {
+      ui.online.status = 'requesting'
+      ui.online.code = message.code || ''
+      ui.online.error = ''
+      if (!['start', 'paused'].includes(ui.menu.kind)) {
+        ui.menu.kind = 'online'
+        ui.menu.title = '申请已发送。'
+        ui.menu.intro = '等待房主同意你的加入申请。'
+      }
+      ui.menu.visible = true
+      engine?.setOverlayOpen(true)
+      syncUi()
+    })
+
+    client.on('join-denied', (message) => {
+      ui.online.status = 'idle'
+      ui.online.code = ''
+      ui.online.error = message.message || '房主没有同意加入。'
+      syncUi()
+    })
+
+    client.on('room-closed', (message) => {
+      ui.online.status = 'idle'
+      ui.online.code = ''
+      ui.online.seat = null
+      ui.online.players = []
+      ui.online.requests = []
+      ui.online.rematch = [false, false]
+      ui.online.waiting = false
+      ui.online.error = message.message || '房间已关闭。'
+      ui.online.closedNotice = ui.online.error
+      const preview = createMatch(ui.selectedMode)
+      state = preview
+      engine?.loadMatch(state)
+      syncUi()
+      showMenu('online', '房间已关闭。', ui.online.error)
+    })
+
     client.on('start', (message) => {
       ui.online.status = 'playing'
       ui.online.waiting = false
+      ui.online.requests = []
+      if (message.match) ui.match = publicSeries(message.match)
       pendingServer = null
       lastAimPayload = ''
       lastAimTurn = null
@@ -700,6 +895,7 @@ export function useBilliards() {
 
     client.on('shot', (message) => {
       if (ui.online.status !== 'playing') return
+      if (message.match) ui.match = publicSeries(message.match)
       const mine = message.seat === ui.online.seat
       if (mine) {
         pendingServer = message.state
@@ -730,6 +926,7 @@ export function useBilliards() {
 
     client.on('state', (message) => {
       if (ui.online.status !== 'playing') return
+      if (message.match) ui.match = publicSeries(message.match)
       if (engine.animating || engine.striking) {
         pendingServer = message.state
         return
@@ -770,6 +967,7 @@ export function useBilliards() {
     client.on('disconnect', () => {
       if (ui.online.status === 'idle') return
       ui.online.status = 'idle'
+      ui.online.connected = false
       ui.online.waiting = false
       ui.online.error = '与联机服务器的连接已断开。'
       showMenu(
@@ -831,14 +1029,21 @@ export function useBilliards() {
       toggleSettings,
       closeSettings,
       setRoomGuide,
+      setRoomVisibility,
+      setBestOf,
       setVolume,
       toggleMute,
       previewSound,
       setName,
       createRoom,
       joinRoom,
+      requestRooms,
       startOnline,
       requestRematch,
+      respondJoinRequest,
+      cancelJoinRequest,
+      playAgainLocal,
+      exitToHome,
       leaveRoom,
       backToLobby,
       setView,

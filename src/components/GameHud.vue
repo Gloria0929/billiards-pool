@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import PlayerCard from './PlayerCard.vue'
 import SettingsPanel from './SettingsPanel.vue'
+import { formatLabel } from '../game/series.js'
 
 const props = defineProps({
   ui: { type: Object, required: true },
@@ -97,6 +98,14 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
     >
       <small>台面最高分</small>
       <b>{{ ui.snookerRemaining }}</b>
+    </div>
+    <div
+      v-if="ui.match && ui.match.bestOf > 1"
+      class="hud-match"
+      :title="formatLabel(ui.match.bestOf)"
+    >
+      <small>第 {{ ui.match.frame }} 局</small>
+      <b>{{ ui.match.wins[0] }} : {{ ui.match.wins[1] }}</b>
     </div>
     <div class="hud-actions">
       <nav class="viewbar viewbar-inline" aria-label="选择视角">
