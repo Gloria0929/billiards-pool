@@ -20,22 +20,27 @@ const groupBalls = computed(() => {
     ? [1, 2, 3, 4, 5, 6, 7]
     : [9, 10, 11, 12, 13, 14, 15]
 })
+const groupLabel = computed(() => {
+  if (props.group === 'solid') return '全色'
+  if (props.group === 'stripe') return '花色'
+  return '未定'
+})
 </script>
 
 <template>
   <div class="pl" :class="{ on: active }">
-    <b>{{ label }}<em v-if="tag" class="pl-tag">{{ tag }}</em></b>
-    <template v-if="mode === 'snk'">
-      <small>得分</small><b>{{ score }}</b>
-    </template>
-    <template v-else>
-      <small>{{ group === 'solid' ? '全色' : group === 'stripe' ? '花色' : '未定' }}</small>
-      <BallChip
-        v-for="n in groupBalls"
-        :key="n"
-        :n="n"
-        :on="onTable.has(n)"
-      />
-    </template>
+    <span class="pl-dot" aria-hidden="true"></span>
+    <span class="pl-name">{{ label }}<em v-if="tag" class="pl-tag">{{ tag }}</em></span>
+    <span v-if="mode !== 'nine'" class="pl-meta">
+      <template v-if="mode === 'snk'">
+        <b class="pl-score">{{ score }}</b><span>分</span>
+      </template>
+      <template v-else>
+        <span class="pl-group">{{ groupLabel }}</span>
+        <span v-if="groupBalls.length" class="pl-chips">
+          <BallChip v-for="n in groupBalls" :key="n" :n="n" :on="onTable.has(n)" />
+        </span>
+      </template>
+    </span>
   </div>
 </template>

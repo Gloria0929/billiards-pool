@@ -6,9 +6,9 @@ export const MODES = {
     R: 28.6,
     gC: 72,
     gS: 58,
-    pc: 78,
-    ps: 70,
-    py: 14,
+    pc: 72,
+    ps: 64,
+    py: 36,
   },
   snk: {
     name: '斯诺克',
@@ -19,7 +19,19 @@ export const MODES = {
     gS: 40,
     pc: 62,
     ps: 56,
-    py: 10,
+    py: 28,
+  },
+  nine: {
+    // 九球沿用中八球台，但袋口回到中八收紧前的尺寸。
+    name: '九球',
+    W: 2540,
+    H: 1270,
+    R: 28.6,
+    gC: 72,
+    gS: 58,
+    pc: 78,
+    ps: 70,
+    py: 36,
   },
 }
 

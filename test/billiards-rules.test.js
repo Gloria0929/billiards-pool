@@ -29,8 +29,8 @@ function layout(mode, locations) {
   return state
 }
 
-function settle(state, { first = null, pots = [], scratch = false, nominatedColor } = {}) {
-  launchShot(state, { angle: 0, power: 0.3, nominatedColor })
+function settle(state, { first = null, pots = [], scratch = false } = {}) {
+  launchShot(state, { angle: 0, power: 0.3 })
   state.firstHit = first
   state.potted = pots
   state.cueIn = scratch
@@ -121,22 +121,40 @@ test('以黑代粉，仅进自由球时仍然打粉球', () => {
   assert.equal(state.balls.find((ball) => ball.n === 21).on, true)
 })
 
-test('指定蓝球后母球落袋罚 5 分，先碰其他彩球也算犯规', () => {
+test('进红后首碰蓝球再白球落袋，按蓝球价值罚 5 分', () => {
   const state = layout('snk', { 0: [600, 550], 1: [1400, 500], ...colors })
   state.sn.onRed = false
-  settle(state, { first: 19, scratch: true, nominatedColor: 19 })
+  settle(state, { first: 19, scratch: true })
   assert.equal(state.sn.score[1], 5)
-  resolveSnookerChoice(state, 'play')
-  state.turn = 0
+})
+
+test('最后一红后的彩球按首碰计分，下一杆开始按顺序清彩', () => {
+  const state = layout('snk', { 0: [600, 550], 1: [1400, 500], ...colors })
+  settle(state, { first: 1, pots: [1] })
+  settle(state, { first: 19, pots: [19] })
+  assert.deepEqual(state.sn.score, [6, 0])
+  assert.equal(state.turn, 0)
+  assert.match(state.message, /目标:黄球/)
+  settle(state, { first: 17 })
+  assert.equal(state.sn.score[1], 4)
+})
+
+test('进红后打离贴着的彩球，无需提名也算合法击球', () => {
+  const state = layout('snk', { 0: [600, 550], 1: [1400, 500], ...colors })
   state.sn.onRed = false
-  settle(state, { first: 16, nominatedColor: 21 })
-  assert.equal(state.sn.score[1], 12)
+  const blue = state.balls.find((ball) => ball.n === 19)
+  blue.x = 600 - 2 * state.geo.R
+  blue.y = 550
+  settle(state)
+  assert.equal(state.turn, 1)
+  assert.equal(state.sn.choice, null)
+  assert.deepEqual(state.sn.score, [0, 0])
 })
 
 test('蓝球点被占用时，蓝球回到最高分的空彩球点', () => {
   const state = layout('snk', { 0: [600, 550], 1: colors[19], ...colors, 21: [2900, 550] })
   state.sn.onRed = false
-  settle(state, { first: 19, pots: [19], nominatedColor: 19 })
+  settle(state, { first: 19, pots: [19] })
   const blue = state.balls.find((ball) => ball.n === 19)
   assert.deepEqual([blue.x, blue.y], colorSpot(state.geo, 21))
 })

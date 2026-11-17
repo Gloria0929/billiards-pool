@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import PlayerCard from './PlayerCard.vue'
+import BallChip from './BallChip.vue'
 import SettingsPanel from './SettingsPanel.vue'
 import { formatLabel } from '../game/series.js'
 
@@ -23,7 +24,23 @@ const watching = computed(
     props.ui.online.seat !== props.ui.turn,
 )
 
-const colorNames = ['黄', '绿', '棕', '蓝', '粉', '黑']
+const turnNote = computed(() => {
+  const { online, turn, phase, names, spin, power } = props.ui
+  if (online.status === 'idle')
+    return turn === 1 && phase === 'aim' && names ? '电脑正在瞄准…' : ''
+  if (online.status !== 'playing') return ''
+  if (online.opponentLeft) return '对手已离开'
+  if (online.waiting) return '正在同步击球…'
+  if (online.seat === turn) return ''
+
+  const opponent = 1 - online.seat
+  const name = names?.[opponent] || online.players?.[opponent]?.name || '对手'
+  const spinLabels = []
+  if (Math.abs(spin.x) > 0.02) spinLabels.push(spin.x > 0 ? '右塞' : '左塞')
+  if (Math.abs(spin.y) > 0.02) spinLabels.push(spin.y > 0 ? '高杆' : '低杆')
+  const detail = spinLabels.length ? ' · ' + spinLabels.join('·') : ''
+  return `正在观看 ${name} 瞄准… · 力度 ${Math.round(power * 100)}%${detail}`
+})
 
 const views = [
   { id: 'top', label: '俯视' },
@@ -102,6 +119,15 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
       <b>{{ ui.snookerRemaining }}</b>
     </div>
     <div
+      v-if="ui.mode === 'nine' && ui.phase !== 'over'"
+      class="hud-target"
+      title="九球：每杆先碰台面最小号球，合法打进 9 号球获胜"
+    >
+      <small>目标</small>
+      <BallChip :n="ui.nineTarget || 1" :on="true" />
+      <span>剩 {{ ui.nineRemaining }} 颗</span>
+    </div>
+    <div
       v-if="ui.match && ui.match.bestOf > 1"
       class="hud-match"
       :title="formatLabel(ui.match.bestOf)"
@@ -110,20 +136,6 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
       <b>{{ ui.match.wins[0] }} : {{ ui.match.wins[1] }}</b>
     </div>
     <div class="hud-actions">
-      <select
-        v-if="ui.canNominate"
-        class="color-nomination"
-        aria-label="指定目标彩球"
-        :value="ui.nominatedColor ?? ''"
-        @change="actions.nominateColor(Number($event.target.value))"
-      >
-        <option value="" disabled>指定彩球</option>
-        <template v-for="ball in ui.balls" :key="ball.n">
-          <option v-if="ball.on && ball.n >= 16" :value="ball.n">
-            {{ colorNames[ball.n - 16] }}球
-          </option>
-        </template>
-      </select>
       <nav class="viewbar viewbar-inline" aria-label="选择视角">
         <button
           v-for="item in views"
@@ -165,7 +177,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
       <button v-else id="nb" @click="actions.openMenu">切换玩法</button>
       <SettingsPanel v-if="ui.settingsOpen" :ui="ui" :actions="actions" />
     </div>
-    <div id="msg" role="status" aria-live="polite">{{ ui.message }}</div>
+    <div id="msg" role="status" aria-live="polite">{{ turnNote || ui.message }}</div>
     <div v-if="onlineOpen" ref="popEl" class="online-pop">
       <h4>联机房间</h4>
       <p>

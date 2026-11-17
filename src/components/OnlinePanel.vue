@@ -178,6 +178,9 @@ async function copyCode() {
               <button :aria-pressed="ui.selectedMode === 'snk'" @click="actions.selectMode('snk')">
                 斯诺克
               </button>
+              <button :aria-pressed="ui.selectedMode === 'nine'" @click="actions.selectMode('nine')">
+                九球
+              </button>
             </div>
           </div>
           <div class="online-option">
@@ -213,7 +216,7 @@ async function copyCode() {
             </div>
           </div>
           <button class="front-primary" :disabled="connecting || !nameReady" @click="create">
-            创建房间 <span aria-hidden="true">↗</span>
+            创建房间 <span class="front-arrow front-arrow-diagonal" aria-hidden="true"></span>
           </button>
         </section>
 
@@ -232,7 +235,7 @@ async function copyCode() {
           </div>
           <button :disabled="connecting || !canJoin" type="submit">加入房间</button>
           <button class="front-text-button" type="button" @click="emit('browse')">
-            查看公开房间 <span aria-hidden="true">→</span>
+            查看公开房间 <span class="front-arrow" aria-hidden="true"></span>
           </button>
         </form>
       </div>

@@ -78,7 +78,7 @@ function join(room) {
       <div v-else class="front-empty">
         <h2>{{ connecting ? '正在连接大厅…' : '暂无公开房间' }}</h2>
         <button v-if="!connecting" class="front-primary" @click="emit('create')">
-          创建公开房间 <span aria-hidden="true">↗</span>
+          创建公开房间 <span class="front-arrow front-arrow-diagonal" aria-hidden="true"></span>
         </button>
       </div>
     </template>

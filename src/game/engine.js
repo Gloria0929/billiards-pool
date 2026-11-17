@@ -1,13 +1,28 @@
 import * as THREE from 'three'
-import { AIM_NUDGE, AIM_NUDGE_FINE, COL, DT, MAX_SIM_STEPS, RAIL, SC, clamp } from './constants.js'
+import { AIM_NUDGE, AIM_NUDGE_FINE, COL, DT, MAX_SIM_STEPS, SC, clamp } from './constants.js'
 import { getGeometry, toWorldX, toWorldZ } from './geometry.js'
 import { canPlaceCue, moving, step } from './physics.js'
 import { buildAimGuide } from './guide.js'
 import { launchShot } from './match.js'
+import { createTable, createTableEnvironment, tableMargins, TABLE_FLOOR } from './table.js'
+import { createRoomShell, loadTableMaps, surfaceColor } from './table-materials.js'
 import * as audio from './audio.js'
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z)
+
+// 九球专用配色（0 为白球，1-8 为 1-8 号球，9 号由白底 + 1 号色条纹生成）
+const NINE_COL = [
+  '#f7f1e0', // 白球
+  '#f2bf00', // 1 黄
+  '#0f4fd6', // 2 蓝
+  '#c8102e', // 3 红
+  '#6f2ec4', // 4 紫
+  '#e2650a', // 5 橙（压暗与黄区分）
+  '#0a8a45', // 6 绿
+  '#5e2a1a', // 7 棕
+  '#141414', // 8 黑
+]
 
 export class BilliardsEngine {
   constructor(canvas) {
@@ -25,8 +40,8 @@ export class BilliardsEngine {
     this.simTime = 0
     this.last = performance.now()
     this.view = 'orbit'
-    this.orbitYaw = 0.22
-    this.orbitPitch = 0.91
+    this.orbitYaw = 0.45
+    this.orbitPitch = 0.50
     this.orbitZoom = 1
     this.camH = 270
     this.camD = 560
@@ -88,23 +103,32 @@ export class BilliardsEngine {
       return
     }
     const rd = this.renderer
-    rd.setClearColor(0x101916, 0)
-    rd.shadowMap.enabled = false
-    rd.shadowMap.type = THREE.PCFSoftShadowMap
-
+    rd.outputEncoding = THREE.sRGBEncoding
+    rd.toneMapping = THREE.ACESFilmicToneMapping
+    rd.toneMappingExposure = 1
+    rd.shadowMap.enabled = true
+    rd.shadowMap.type = THREE.VSMShadowMap
+    rd.shadowMap.autoUpdate = false
+    this.tableMaps = loadTableMaps(rd.capabilities.getMaxAnisotropy())
+    this.tableMapTextures = new Set(Object.values(this.tableMaps))
     this.scene = new THREE.Scene()
-    this.scene.background = null
+    this.scene.background = surfaceColor(0x141917)
+    this.scene.fog = new THREE.Fog(this.scene.background, 5800, 17600)
     this.cam = new THREE.PerspectiveCamera(50, 1, 10, 12000)
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.62))
-    const sun = new THREE.DirectionalLight(0xffffff, 0.75)
-    sun.castShadow = false
-    sun.shadow.mapSize.set(2048, 2048)
-    sun.shadow.bias = -0.0004
-    this.scene.add(sun)
-    this.sun = sun
-    const lamp = new THREE.PointLight(0xfff0d8, 0.35)
-    lamp.position.set(0, 1500, 0)
-    this.scene.add(lamp)
+    this.tableEnvironment = createTableEnvironment(rd)
+    this.scene.environment = this.tableEnvironment.texture
+    this.scene.add(new THREE.HemisphereLight(0xe8eef2, 0x836f5a, 0.68))
+    this.sun = new THREE.SpotLight(0xffefd9, 1.95, 6300, 0.82, 0.74, 1)
+    this.sun.castShadow = true
+    this.sun.shadow.mapSize.set(1536, 1536)
+    this.sun.shadow.radius = 8
+    this.sun.shadow.normalBias = 2.3
+    this.sun.shadow.bias = -0.00022
+    this.sun.shadow.camera.near = 1050
+    this.scene.add(this.sun, this.sun.target)
+    const fill = new THREE.DirectionalLight(0xd1dfed, 0.37)
+    fill.position.set(1400, 1150, -1450)
+    this.scene.add(fill)
 
     this.bg = new THREE.Group()
     this.scene.add(this.bg)
@@ -137,15 +161,33 @@ export class BilliardsEngine {
       polygonOffsetUnits: -2,
     })
 
+    this.tableStage = new THREE.Group()
+    this.scene.add(this.tableStage)
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(46000, 46000).rotateX(-Math.PI / 2),
+      new THREE.MeshStandardMaterial({
+        map: this.tableMaps.floor, color: surfaceColor(0x746b61),
+        roughness: 0.77, envMapIntensity: 0.19,
+      }),
+    )
+    ground.position.y = TABLE_FLOOR
+    ground.receiveShadow = true
+    this.tableStage.add(ground, createRoomShell(TABLE_FLOOR, this.tableMaps))
+    this.tableShadow = new THREE.Mesh(this.blobGeo, new THREE.MeshBasicMaterial({
+      map: this.blobTexture, transparent: true, depthWrite: false, opacity: 0.51,
+    }))
+    this.tableShadow.position.y = TABLE_FLOOR + 1
+    this.tableStage.add(this.tableShadow)
+
     this.aimGroup = new THREE.Group()
     const aimMaterial = (c) =>
       new THREE.MeshBasicMaterial({
-        color: c,
+        color: surfaceColor(c),
         transparent: true,
-        opacity: 0.75,
+        opacity: 0.91, toneMapped: false,
       })
     const cyl = (c) => {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 1, 6), aimMaterial(c))
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(3.35, 3.35, 1, 8), aimMaterial(c))
       this.aimGroup.add(m)
       return m
     }
@@ -169,14 +211,15 @@ export class BilliardsEngine {
           new THREE.Vector3(),
         ]),
         new THREE.LineDashedMaterial({
-          color,
+          color: surfaceColor(color),
           dashSize: 22,
           gapSize: 14,
           transparent: true,
-          opacity: 0.9,
+          opacity: 0.9, toneMapped: false,
         }),
       )
       line.visible = false
+      line.frustumCulled = false
       this.aimGroup.add(line)
       return line
     }
@@ -188,11 +231,11 @@ export class BilliardsEngine {
       const mark = new THREE.Mesh(
         pocketRing,
         new THREE.MeshBasicMaterial({
-          color,
+          color: surfaceColor(color),
           transparent: true,
           opacity: 0.85,
           side: THREE.DoubleSide,
-          depthWrite: false,
+          depthWrite: false, toneMapped: false,
         }),
       )
       mark.rotation.x = -Math.PI / 2
@@ -207,7 +250,7 @@ export class BilliardsEngine {
 
     this.cueGroup = new THREE.Group()
     const cueMaterial = (c, s) =>
-      new THREE.MeshPhongMaterial({ color: c, shininess: s || 10 })
+      new THREE.MeshPhongMaterial({ color: surfaceColor(c), shininess: s || 10 })
     this.cueShaft = new THREE.Mesh(
       new THREE.CylinderGeometry(5, 9, 900, 10),
       cueMaterial(0xe0bd82, 40),
@@ -228,6 +271,44 @@ export class BilliardsEngine {
   }
 
   /* ---------- 球与球桌资源 ---------- */
+
+  // 九球专用球面：比黑八那套更亮的电视配色，号码用细圈 + 数字，不加大白圆贴。
+  nineBallTexture(n) {
+    const c = document.createElement('canvas')
+    c.width = 512
+    c.height = 256
+    const x = c.getContext('2d')
+    if (n > 8) {
+      x.fillStyle = '#f5f1e4'
+      x.fillRect(0, 0, 512, 256)
+      x.fillStyle = NINE_COL[n - 8]
+      x.fillRect(0, 52, 512, 152)
+    } else {
+      x.fillStyle = NINE_COL[n]
+      x.fillRect(0, 0, 512, 256)
+    }
+    if (n > 0) {
+      const ink = n === 1 || n === 5 || n === 9 ? '#1a160e' : '#f8f5ec'
+      for (const u of [128, 384]) {
+        x.globalAlpha = 0.55
+        x.strokeStyle = ink
+        x.lineWidth = 2.6
+        x.beginPath()
+        x.arc(u, 128, 42, 0, Math.PI * 2)
+        x.stroke()
+        x.globalAlpha = 1
+        x.fillStyle = ink
+        x.font = '600 60px "Helvetica Neue", Helvetica, Arial, sans-serif'
+        x.textAlign = 'center'
+        x.textBaseline = 'middle'
+        x.fillText(n, u, 132)
+      }
+    }
+    const map = new THREE.CanvasTexture(c)
+    map.encoding = THREE.sRGBEncoding
+    return map
+  }
+
   ballTexture(n) {
     const c = document.createElement('canvas')
     c.width = 512
@@ -251,8 +332,8 @@ export class BilliardsEngine {
         x.textBaseline = 'middle'
         x.fillText(n, u, 131)
       }
-    else if (this.geo.mode !== 'snk') {
-      // 斯诺克的白球是纯白色；红点只用于中式八球的红点练习球。
+    else if (this.geo.mode === 'pool') {
+      // 斯诺克与九球的白球是纯白色；红点只用于中式八球的红点练习球。
       x.fillStyle = '#c22'
       for (const u of [0, 128, 256, 384, 512]) {
         x.beginPath()
@@ -260,7 +341,9 @@ export class BilliardsEngine {
         x.fill()
       }
     }
-    return new THREE.CanvasTexture(c)
+    const map = new THREE.CanvasTexture(c)
+    map.encoding = THREE.sRGBEncoding
+    return map
   }
 
   disposeGroup(group) {
@@ -275,7 +358,7 @@ export class BilliardsEngine {
     })
     geometries.forEach((g) => g.dispose())
     materials.forEach((m) => {
-      if (m.map) m.map.dispose()
+      if (m.map && !this.tableMapTextures?.has(m.map)) m.map.dispose()
       m.dispose()
     })
   }
@@ -291,275 +374,37 @@ export class BilliardsEngine {
   }
 
   buildTable() {
-    const geo = this.geo
-    const { W, H, RAIL: rail } = { ...geo, RAIL }
-    const hw = W / 2
-    const hh = H / 2
-    const tx = (x) => toWorldX(geo, x)
-    const tz = (y) => toWorldZ(geo, y)
     if (this.tg) {
       this.scene.remove(this.tg)
       this.disposeGroup(this.tg)
     }
-    this.tg = new THREE.Group()
+    const { W, H } = this.geo
+    this.tg = createTable(this.geo, this.tableMaps)
     this.scene.add(this.tg)
-    const tg = this.tg
-
-    const feltShape = new THREE.Shape()
-    feltShape.moveTo(-hw - rail, -hh - rail)
-    feltShape.lineTo(hw + rail, -hh - rail)
-    feltShape.lineTo(hw + rail, hh + rail)
-    feltShape.lineTo(-hw - rail, hh + rail)
-    feltShape.closePath()
-    for (const q of geo.PR) {
-      const hole = new THREE.Path()
-      hole.absarc(q[0] - hw, q[1] - hh, q[2] * 0.85, 0, Math.PI * 2, true)
-      feltShape.holes.push(hole)
-    }
-    const fabric = document.createElement('canvas')
-    fabric.width = fabric.height = 256
-    const fabricCtx = fabric.getContext('2d')
-    const pixels = fabricCtx.createImageData(256, 256)
-    for (let i = 0; i < pixels.data.length; i += 4) {
-      const n = Math.random() * 13
-      pixels.data[i] = 31 + n
-      pixels.data[i + 1] = 107 + n
-      pixels.data[i + 2] = 68 + n
-      pixels.data[i + 3] = 255
-    }
-    fabricCtx.putImageData(pixels, 0, 0)
-    const fabricMap = new THREE.CanvasTexture(fabric)
-    fabricMap.wrapS = fabricMap.wrapT = THREE.RepeatWrapping
-    fabricMap.repeat.set(1 / 380, 1 / 380)
-    fabricMap.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
-    const felt = new THREE.Mesh(
-      new THREE.ShapeGeometry(feltShape, 32),
-      new THREE.MeshLambertMaterial({ map: fabricMap }),
-    )
-    felt.rotation.x = -Math.PI / 2
-    felt.receiveShadow = false
-    tg.add(felt)
-
-    const cushionMat = new THREE.MeshPhongMaterial({ color: 0x0d5a30, shininess: 5 })
-    const h = 40
-    const t = 50
-    const cu = (pts) => {
-      const sh = new THREE.Shape(
-        pts.map((q) => new THREE.Vector2(q[0] - hw, q[1] - hh)),
-      )
-      const g = new THREE.ExtrudeGeometry(sh, { depth: h, bevelEnabled: false })
-      g.rotateX(-Math.PI / 2)
-      const m = new THREE.Mesh(g, cushionMat)
-      m.castShadow = m.receiveShadow = false
-      tg.add(m)
-    }
-    const fc = Math.max(
-      0,
-      Math.min(t, geo.gC - Math.sqrt(Math.max(0, (geo.PR[0][2] * 0.85 + 3) ** 2 - t * t))),
-    )
-    const fd = Math.max(
-      0,
-      Math.min(
-        t,
-        geo.gS - Math.sqrt(Math.max(0, (geo.PR[1][2] * 0.85 + 3) ** 2 - (t - geo.py) ** 2)),
-      ),
-    )
-    const hr = (u0, u1, y0, sg, a, b) =>
-      cu([
-        [u0, y0],
-        [u1, y0],
-        [u1 + b, y0 + sg * t],
-        [u0 - a, y0 + sg * t],
-      ])
-    const vr = (v0, v1, x0, sg, a, b) =>
-      cu([
-        [x0, v0],
-        [x0, v1],
-        [x0 + sg * t, v1 + b],
-        [x0 + sg * t, v0 - a],
-      ])
-    hr(geo.gC, hw - geo.gS, 0, -1, fc, fd)
-    hr(hw + geo.gS, W - geo.gC, 0, -1, fd, fc)
-    hr(geo.gC, hw - geo.gS, H, 1, fc, fd)
-    hr(hw + geo.gS, W - geo.gC, H, 1, fd, fc)
-    vr(geo.gC, H - geo.gC, 0, -1, fc, fc)
-    vr(geo.gC, H - geo.gC, W, 1, fc, fc)
-
-    const frameShape = new THREE.Shape()
-    frameShape.moveTo(-hw - rail, -hh - rail)
-    frameShape.lineTo(hw + rail, -hh - rail)
-    frameShape.lineTo(hw + rail, hh + rail)
-    frameShape.lineTo(-hw - rail, hh + rail)
-    frameShape.closePath()
-    const rcn = geo.PR[0][2] * 0.85 + 7
-    const rsd = geo.PR[1][2] * 0.85 + 7
-    const ps = geo.py
-    const dc = Math.sqrt(rcn * rcn - t * t)
-    const dxs = Math.sqrt(rsd * rsd - (t - ps) * (t - ps))
-    const path = new THREE.Path()
-    const arc = (cx, cy, r, a, b) => {
-      const a0 = Math.atan2(a[1] - cy, a[0] - cx)
-      let a1 = Math.atan2(b[1] - cy, b[0] - cx)
-      if (a1 < a0) a1 += Math.PI * 2
-      path.absarc(cx, cy, r, a0, a1, false)
-    }
-    const Bbl = [-hw + dc, -hh - t]
-    const Bbr = [hw - dc, -hh - t]
-    const Abr = [hw + t, -hh + dc]
-    const Atr = [hw + t, hh - dc]
-    const Btr = [hw - dc, hh + t]
-    const Btl = [-hw + dc, hh + t]
-    const Atl = [-hw - t, hh - dc]
-    const Abl = [-hw - t, -hh + dc]
-    path.moveTo(Bbl[0], Bbl[1])
-    path.lineTo(-dxs, -hh - t)
-    arc(0, -hh - ps, rsd, [-dxs, -hh - t], [dxs, -hh - t])
-    path.lineTo(Bbr[0], Bbr[1])
-    arc(hw, -hh, rcn, Bbr, Abr)
-    path.lineTo(Atr[0], Atr[1])
-    arc(hw, hh, rcn, Atr, Btr)
-    path.lineTo(dxs, hh + t)
-    arc(0, hh + ps, rsd, [dxs, hh + t], [-dxs, hh + t])
-    path.lineTo(Btl[0], Btl[1])
-    arc(-hw, hh, rcn, Btl, Atl)
-    path.lineTo(Abl[0], Abl[1])
-    arc(-hw, -hh, rcn, Abl, Bbl)
-    frameShape.holes.push(path)
-    const frameGeo = new THREE.ExtrudeGeometry(frameShape, {
-      depth: 60,
-      bevelEnabled: false,
-    })
-    frameGeo.rotateX(-Math.PI / 2)
-    const frame = new THREE.Mesh(
-      frameGeo,
-      new THREE.MeshPhongMaterial({ color: 0x493326, shininess: 50 }),
-    )
-    frame.castShadow = frame.receiveShadow = false
-    tg.add(frame)
-    const apronGeo = new THREE.ExtrudeGeometry(frameShape, {
-      depth: 160,
-      bevelEnabled: false,
-    })
-    apronGeo.rotateX(-Math.PI / 2)
-    const apron = new THREE.Mesh(
-      apronGeo,
-      new THREE.MeshPhongMaterial({ color: 0x251d16, shininess: 25 }),
-    )
-    apron.position.y = -160
-    apron.castShadow = false
-    tg.add(apron)
-
-    for (const x of [W / 8, W / 4, (3 * W) / 8, (5 * W) / 8, (3 * W) / 4, (7 * W) / 8])
-      for (const y of [-80, H + 80]) {
-        const sight = new THREE.Mesh(
-          new THREE.CircleGeometry(5, 4),
-          new THREE.MeshPhongMaterial({ color: 0xc7ba93, shininess: 45 }),
-        )
-        sight.rotation.x = -Math.PI / 2
-        sight.rotation.z = Math.PI / 4
-        sight.position.set(tx(x), 60.6, tz(y))
-        tg.add(sight)
-      }
-    for (const y of [H / 4, H / 2, (3 * H) / 4])
-      for (const x of [-80, W + 80]) {
-        const sight = new THREE.Mesh(
-          new THREE.CircleGeometry(5, 4),
-          new THREE.MeshPhongMaterial({ color: 0xc7ba93, shininess: 45 }),
-        )
-        sight.rotation.x = -Math.PI / 2
-        sight.rotation.z = Math.PI / 4
-        sight.position.set(tx(x), 60.6, tz(y))
-        tg.add(sight)
-      }
-
-    for (const q of geo.PR) {
-      const pr = q[2] * 0.85
-      const pit = new THREE.Mesh(
-        new THREE.CylinderGeometry(pr, pr * 0.72, 230, 48, 1, true),
-        new THREE.MeshPhongMaterial({
-          color: 0x11120f,
-          side: THREE.BackSide,
-          shininess: 3,
-        }),
-      )
-      pit.position.set(tx(q[0]), -115, tz(q[1]))
-      tg.add(pit)
-      const bottom = new THREE.Mesh(
-        new THREE.CircleGeometry(pr * 0.74, 40),
-        new THREE.MeshBasicMaterial({ color: 0x030604 }),
-      )
-      bottom.rotation.x = -Math.PI / 2
-      bottom.position.set(tx(q[0]), -230, tz(q[1]))
-      tg.add(bottom)
-      const lip = new THREE.Mesh(
-        new THREE.TorusGeometry(pr + 2.5, 3, 8, 48),
-        new THREE.MeshPhongMaterial({ color: 0x29291e, shininess: 15 }),
-      )
-      lip.rotation.x = -Math.PI / 2
-      lip.position.set(tx(q[0]), 1, tz(q[1]))
-      tg.add(lip)
-      const leather = new THREE.Mesh(
-        new THREE.RingGeometry(pr + 5, pr + 10, 48),
-        new THREE.MeshPhongMaterial({ color: 0x63533a, shininess: 12 }),
-      )
-      leather.rotation.x = -Math.PI / 2
-      leather.position.set(tx(q[0]), 0.8, tz(q[1]))
-      tg.add(leather)
-    }
-
-    const lineMat = new THREE.LineBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.35,
-    })
-    const ln = (pts) =>
-      tg.add(
-        new THREE.Line(
-          new THREE.BufferGeometry().setFromPoints(
-            pts.map((p) => V3(tx(p[0]), 0.7, tz(p[1]))),
-          ),
-          lineMat,
-        ),
-      )
-    if (geo.mode === 'pool') ln([[W / 4, 0], [W / 4, H]])
-    else {
-      ln([[737, 0], [737, H]])
-      const arcPoints = []
-      for (let i = 0; i <= 24; i++) {
-        const a = Math.PI / 2 + (Math.PI * i) / 24
-        arcPoints.push([737 + 292 * Math.cos(a), H / 2 + 292 * Math.sin(a)])
-      }
-      ln(arcPoints)
-    }
-
-    Object.assign(this.sun.shadow.camera, {
-      left: -W * 0.6,
-      right: W * 0.6,
-      top: H * 0.8,
-      bottom: -H * 0.8,
-      near: 100,
-      far: 5000,
-    })
-    this.sun.shadow.camera.updateProjectionMatrix()
-    this.sun.position.set(-W * 0.2, 2200, H * 0.3)
+    const [railX, railY] = tableMargins(this.geo)
+    this.tableShadow.scale.set((W + railX * 2) * 1.48, 1, (H + railY * 2) * 1.72)
+    this.sun.position.set(-350, this.geo.mode === 'snk' ? 2800 : 2420, 340)
+    this.renderer.shadowMap.needsUpdate = true
   }
 
   createBallMesh(n) {
     const geo = this.geo
-    const material =
-      geo.mode === 'pool' || n === 0
-        ? new THREE.MeshPhongMaterial({
-            map: this.ballTexture(n),
-            shininess: 110,
-            specular: 0x555555,
-          })
-        : new THREE.MeshPhongMaterial({
-            color: n <= 15 ? 0xc0161b : SC[n - 16],
-            shininess: 110,
-            specular: 0x555555,
-          })
+    const surface =
+      geo.mode === 'nine'
+        ? { map: this.nineBallTexture(n) }
+        : geo.mode !== 'snk' || n === 0
+          ? { map: this.ballTexture(n) }
+          : { color: surfaceColor(n <= 15 ? 0xc0161b : SC[n - 16]) }
+    const material = new THREE.MeshPhysicalMaterial({
+      ...surface,
+      // 九球弱化高光，让球色更实、更容易区分；中八保持原来的亮面。
+      roughness: geo.mode === 'nine' ? 0.3 : 0.19,
+      clearcoat: geo.mode === 'nine' ? 0.5 : 0.88,
+      clearcoatRoughness: geo.mode === 'nine' ? 0.28 : 0.15,
+      envMapIntensity: geo.mode === 'nine' ? 0.48 : 0.66,
+    })
     const mesh = new THREE.Mesh(this.sg, material)
-    mesh.castShadow = false
+    mesh.castShadow = mesh.receiveShadow = true
     this.bg.add(mesh)
     const shadow = new THREE.Mesh(this.blobGeo, this.blobMat)
     shadow.renderOrder = 1
@@ -614,6 +459,7 @@ export class BilliardsEngine {
     this.state = state
     this.animating = false
     this.acc = 0
+    if (this.renderer) this.renderer.shadowMap.needsUpdate = true
     for (const ball of state.balls) {
       const entry = this.meshes.get(ball.n)
       if (!entry) continue
@@ -660,8 +506,8 @@ export class BilliardsEngine {
   }
 
   resetView() {
-    this.orbitYaw = 0.22
-    this.orbitPitch = 0.91
+    this.orbitYaw = 0.45
+    this.orbitPitch = 0.50
     this.orbitZoom = 1
     this.camH = 270
     this.camD = 560
@@ -738,10 +584,17 @@ export class BilliardsEngine {
       const up = direction.clone().cross(right).normalize()
       const tf = Math.tan((desired.fov * Math.PI) / 360)
       let distance = 0
-      for (const x of [-W / 2 - RAIL - 40, W / 2 + RAIL + 40])
-        for (const z of [-H / 2 - RAIL - 40, H / 2 + RAIL + 40])
-          for (const y of [-190, 65]) {
-            const p = V3(x, y, z)
+      const [railX, railY] = tableMargins(this.geo)
+      this.cameraTarget.set(0, -320, 0)
+      const sections = [
+        [W / 2 + railX + 8, H / 2 + railY + 8, 67],
+        [W / 2 + 5, H / 2 + 79, -435],
+        [W / 2 - 27, H / 2 + 65, TABLE_FLOOR],
+      ]
+      for (const [halfWidth, halfDepth, y] of sections)
+        for (const x of [-halfWidth, halfWidth])
+          for (const z of [-halfDepth, halfDepth]) {
+            const p = V3(x, y - this.cameraTarget.y, z)
             const depth = p.dot(direction)
             distance = Math.max(
               distance,
@@ -750,8 +603,7 @@ export class BilliardsEngine {
             )
           }
       desired.up.set(0, 1, 0)
-      desired.position.copy(direction).multiplyScalar(distance * 1.15 * this.orbitZoom)
-      this.cameraTarget.set(0, -15, 0)
+      desired.position.copy(this.cameraTarget).addScaledVector(direction, distance * 1.04 * this.orbitZoom)
     }
     desired.lookAt(this.cameraTarget)
     const blend =
@@ -805,8 +657,13 @@ export class BilliardsEngine {
       entry.shadow.position.set(tx(ball.x), 1.5, tz(ball.y))
       entry.shadow.scale.setScalar(2.7 * R)
     }
-
     const cue = state.balls[0]
+    if (this.animating || this.drag || this.shadowCueX !== cue.x || this.shadowCueY !== cue.y) {
+      this.renderer.shadowMap.needsUpdate = true
+      this.shadowCueX = cue.x
+      this.shadowCueY = cue.y
+    }
+
     const dragging = this.drag && state.phase === 'aim'
     const showCue = state.phase === 'aim' && cue.on && !dragging
     this.aimGroup.visible =
@@ -1329,7 +1186,6 @@ export class BilliardsEngine {
       power: this.power,
       spin: { x: this.spin.x, y: this.spin.y },
       cue: { x: this.state.balls[0].x, y: this.state.balls[0].y },
-      nominatedColor: this.nominatedColor ?? null,
     }
     this.pendingShot = shot
     this.striking = true
@@ -1445,6 +1301,10 @@ export class BilliardsEngine {
     this.clearBalls()
     if (this.tg) this.disposeGroup(this.tg)
     if (this.sg) this.sg.dispose()
+    if (this.tableStage) this.disposeGroup(this.tableStage)
+    this.tableMapTextures?.forEach((map) => map.dispose())
+    this.sun?.shadow.dispose()
+    this.tableEnvironment?.dispose()
     this.renderer?.dispose()
   }
 }

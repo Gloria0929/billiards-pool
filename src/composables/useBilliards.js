@@ -1,7 +1,7 @@
 import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { BilliardsEngine } from '../game/engine.js'
 import { createMatch, hydrateState, offerStalemate, resolveBreakChoice as applyBreakChoice, resolveFrameChoice, snapshot } from '../game/match.js'
-import { canNominateColor, concedeFrame, endShot, snookerPointsRemaining } from '../game/rules.js'
+import { concedeFrame, endShot, snookerPointsRemaining } from '../game/rules.js'
 import { MODES } from '../game/constants.js'
 import {
   advanceSeries,
@@ -47,11 +47,11 @@ export function useBilliards() {
     groups: [null, null],
     scores: [0, 0],
     snookerRemaining: 0,
+    nineTarget: 0,
+    nineRemaining: 0,
     snookerOnRed: true,
     snookerColorIndex: 0,
     snookerFinalColor: false,
-    nominatedColor: null,
-    canNominate: false,
     names: null,
     balls: [],
     message: '',
@@ -117,8 +117,6 @@ export function useBilliards() {
       ui.bestOf = normalizeBestOf(saved)
       localSeries = createSeries(ui.bestOf)
     } catch (_) {}
-    ui.online.guide = ui.showGuide
-
     engine = new BilliardsEngine(canvasRef.value)
     engine.overlayOpen = true
     engine.showGuide = ui.showGuide
@@ -195,6 +193,11 @@ export function useBilliards() {
     ui.scores = snap.scores
     ui.snookerRemaining =
       snap.mode === 'snk' ? snookerPointsRemaining(state) : 0
+    const nineBalls = snap.balls.filter((ball) => ball.on && ball.n > 0)
+    ui.nineRemaining = nineBalls.length
+    ui.nineTarget = nineBalls.length
+      ? Math.min(...nineBalls.map((ball) => ball.n))
+      : 0
     ui.snookerOnRed = snap.onRed
     ui.snookerColorIndex = snap.colorIndex
     ui.snookerFinalColor = snap.finalColor
@@ -215,12 +218,9 @@ export function useBilliards() {
       state.turn === 1
     const canPlay = state.phase === 'aim' && !ui.menu.visible &&
       myTurn && !ui.online.waiting && !aiTurn
-    if (!canNominateColor(state, ui.nominatedColor)) ui.nominatedColor = null
-    ui.canNominate = canPlay && state.balls.some((ball) => canNominateColor(state, ball.n))
-    ui.canShoot = canPlay && (!ui.canNominate || ui.nominatedColor !== null)
+    ui.canShoot = canPlay
     ui.canRequestStalemate = canPlay && !state.breakShot && !engine?.striking &&
       (onlinePlaying || state.quietShots >= 6)
-    if (engine) engine.nominatedColor = ui.nominatedColor
     const playerSeat = onlinePlaying ? ui.online.seat : 0
     ui.canConcede =
       state.mode === 'snk' &&
@@ -418,6 +418,8 @@ export function useBilliards() {
       ui.online.status === 'playing'
         ? choice.seat === ui.online.seat
         : choice.seat === 0
+    // 本地对战由电脑做决定时不再弹窗，打完这一杆的提示已经足够。
+    if (ui.online.status !== 'playing' && !mine) return
     showMenu(
       'break-choice',
       state.message,
@@ -501,6 +503,8 @@ export function useBilliards() {
       ui.online.status === 'playing'
         ? choice.seat === ui.online.seat
         : choice.seat === 0
+    // 本地对战由电脑做决定时不再弹窗，打完这一杆的提示已经足够。
+    if (ui.online.status !== 'playing' && !mine) return
     showMenu(
       'foul-choice',
       choice.kind ? state.message : '犯规判罚。',
@@ -675,7 +679,7 @@ export function useBilliards() {
   }
 
   function setRoomGuide(value) {
-    if (ui.online.status !== 'idle') return
+    if (!['idle', 'connecting'].includes(ui.online.status)) return
     ui.online.guide = !!value
   }
 
@@ -715,7 +719,6 @@ export function useBilliards() {
 
   /* ---------- 引擎事件 ---------- */
   function handleShoot(shot) {
-    ui.nominatedColor = null
     if (ui.online.status === 'playing') {
       const sent = net.send({ type: 'shot', shot })
       if (!sent) return
@@ -909,7 +912,7 @@ export function useBilliards() {
       applyGuide(preOnlineGuide, false)
       preOnlineGuide = null
     }
-    ui.online.guide = ui.showGuide
+    ui.online.guide = true
     const preview = createMatch(ui.selectedMode)
     state = preview
     engine.loadMatch(state)
@@ -1005,6 +1008,7 @@ export function useBilliards() {
     client.on('room-closed', (message) => {
       ui.online.status = 'idle'
       ui.online.code = ''
+      ui.online.guide = true
       ui.online.seat = null
       ui.online.players = []
       ui.online.requests = []
@@ -1166,12 +1170,6 @@ export function useBilliards() {
     if (ui.canShoot) engine?.setSpin(spin)
   }
 
-  function nominateColor(number) {
-    if (!ui.canNominate) return
-    ui.nominatedColor = canNominateColor(state, number) ? number : null
-    syncUi()
-  }
-
   function shoot() {
     engine?.shoot()
   }
@@ -1220,7 +1218,6 @@ export function useBilliards() {
       nudge,
       setPower,
       setSpin,
-      nominateColor,
       shoot,
     },
   }

@@ -38,9 +38,13 @@ const frontRoom = computed(() =>
   showModes.value || ["online", "local-over", "online-over", "online-left"].includes(props.ui.menu.kind),
 );
 const outcome = computed(() => props.ui.menu.kind.endsWith("-over"));
+const compactMenu = computed(() =>
+  ["break-choice", "foul-choice", "free-ball"].includes(props.ui.menu.kind),
+);
 const modes = [
   { id: "pool", name: "中式八球", description: "清完本组球，再打黑八。", balls: 16 },
   { id: "snk", name: "斯诺克", description: "红球和彩球交替得分。", balls: 22 },
+  { id: "nine", name: "九球", description: "按号码顺序击球，打进九号获胜。", balls: 9 },
 ];
 const tabs = [
   { id: "local", label: "人机对战" },
@@ -119,7 +123,7 @@ function returnToLobby() {
   <div
     id="ov"
     v-if="ui.menu.visible"
-    :class="{ 'front-room': frontRoom }"
+    :class="{ 'front-room': frontRoom, compact: compactMenu }"
     role="dialog"
     aria-modal="true"
     aria-labelledby="ovt"
@@ -151,7 +155,7 @@ function returnToLobby() {
             class="front-text-button back-to-match"
             @click="actions.resumeGame"
           >
-            <span aria-hidden="true">←</span> 返回当前对局
+            <span class="front-arrow front-arrow-back" aria-hidden="true"></span> 返回当前对局
           </button>
           <h1 id="ovt">{{ panelTitle }}</h1>
           <p v-if="panelIntro" class="intro">{{ panelIntro }}</p>
@@ -161,15 +165,16 @@ function returnToLobby() {
           <template v-if="tab === 'local'">
             <div class="play-options" role="group" aria-label="选择玩法">
               <button
-                v-for="mode in modes"
+                v-for="(mode, index) in modes"
                 :key="mode.id"
-                :id="mode.id === 'pool' ? 'm1' : 'm2'"
+                :id="'m' + (index + 1)"
                 class="play-choice"
                 :aria-pressed="ui.selectedMode === mode.id"
                 @click="actions.selectMode(mode.id)"
               >
                 <span class="play-icon" :class="'play-icon-' + mode.id" aria-hidden="true">
                   <span v-if="mode.id === 'pool'" class="play-eight"><b>8</b></span>
+                  <span v-else-if="mode.id === 'nine'" class="play-nine"><b>9</b></span>
                   <span v-else class="play-reds"><i></i><i></i><i></i></span>
                 </span>
                 <span class="play-description">
@@ -212,7 +217,7 @@ function returnToLobby() {
               <p class="difficulty-hint">{{ difficultyNote }}</p>
             </div>
             <button id="start" class="front-primary start-game" @click="actions.startLocal">
-              开始对局 <span aria-hidden="true">↗</span>
+              开始对局 <span class="front-arrow front-arrow-diagonal" aria-hidden="true"></span>
             </button>
           </template>
 

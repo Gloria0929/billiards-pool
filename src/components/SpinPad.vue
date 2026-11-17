@@ -37,7 +37,7 @@ function draw() {
   ctx.moveTo(c - ballR, c)
   ctx.lineTo(c + ballR, c)
   ctx.stroke()
-  ctx.fillStyle = '#d3262b'
+  ctx.fillStyle = '#b3483c'
   let sx = props.spin.x
   let sy = props.spin.y
   const spinLen = Math.hypot(sx, sy)

@@ -1,7 +1,6 @@
 import { getGeometry } from './geometry.js'
 import { castRay, moving, step } from './physics.js'
 import { launchShot, simulateShot } from './match.js'
-import { canNominateColor } from './rules.js'
 
 const SOLIDS = 'solid'
 
@@ -110,13 +109,21 @@ function findEscapeShot(state, targets, difficulty) {
     })
     if (trial.cueIn || trial.inHand || trial.phase === 'choice') continue
     if (trial.firstHit === null || !legal.has(trial.firstHit)) continue
-    return { angle: hit.angle, power: hit.power, target: trial.firstHit }
+    return { angle: hit.angle, power: hit.power }
   }
   return null
 }
 
 function legalTargets(state, seat) {
   const onTable = state.balls.filter((ball) => ball.on && ball.n !== 0)
+  if (state.mode === 'nine') {
+    // 九球只能先打台面最小号球。
+    const target = onTable.reduce(
+      (best, ball) => (!best || ball.n < best.n ? ball : best),
+      null,
+    )
+    return target ? [target] : []
+  }
   if (state.mode === 'pool') {
     const eight = onTable.find((ball) => ball.n === 8)
     if (state.breakShot) return onTable.filter((ball) => ball.n !== 8)
@@ -219,10 +226,13 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
   const cue = state.balls[0]
   const cueRef = { x: cue.x, y: cue.y }
 
-  if (state.mode === 'pool' && state.breakShot) {
-    const rack = state.balls.filter(
-      (ball) => ball.on && ball.n !== 0 && ball.n !== 8,
-    )
+  if ((state.mode === 'pool' || state.mode === 'nine') && state.breakShot) {
+    const rack =
+      state.mode === 'nine'
+        ? state.balls.filter((ball) => ball.on && ball.n === 1)
+        : state.balls.filter(
+            (ball) => ball.on && ball.n !== 0 && ball.n !== 8,
+          )
     if (rack.length) {
       const cx =
         rack.reduce((sum, ball) => sum + ball.x, 0) / rack.length
@@ -267,13 +277,12 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
       0.25,
       Math.min(0.95, best.power + (Math.random() - 0.5) * d.power),
     )
-    const nominatedColor = canNominateColor(state, best.target.n) ? best.target.n : null
     if (difficulty === 'hard') {
       let picked = null
       for (const spin of HARD_SPINS) {
         const result = trialShot(
           state,
-          { angle, power, spin, cue: cueRef, nominatedColor },
+          { angle, power, spin, cue: cueRef },
           best.target.n,
         )
         // 结果相近时更愿意加塞走位，但不会为了炫技牺牲进球。
@@ -281,9 +290,9 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
         const score = result.score + bonus
         if (!picked || score > picked.score) picked = { score, spin }
       }
-      return { angle, power, spin: picked.spin, cue: cueRef, nominatedColor }
+      return { angle, power, spin: picked.spin, cue: cueRef }
     }
-    return { angle, power, spin: { x: 0, y: 0 }, cue: cueRef, nominatedColor }
+    return { angle, power, spin: { x: 0, y: 0 }, cue: cueRef }
   }
 
   let safety = null
@@ -308,7 +317,6 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
         angle: Math.atan2(dy, dx),
         power: Math.max(0.3, Math.min(0.8, 0.35 + distance / 5000)),
         distance,
-        target: target.n,
       }
     const score = distance + (clear ? 0 : 10000)
     if (!safety || score < safety.score)
@@ -316,14 +324,12 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
         angle: Math.atan2(dy, dx),
         power: Math.max(0.3, Math.min(0.8, 0.35 + distance / 5000)),
         score,
-        target: target.n,
       }
   }
   if (direct) {
     return {
       angle: direct.angle + (Math.random() - 0.5) * d.safety,
       power: direct.power,
-      nominatedColor: canNominateColor(state, direct.target) ? direct.target : null,
       spin: { x: 0, y: 0 },
       cue: cueRef,
     }
@@ -343,7 +349,6 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
     return {
       angle: stillLegal === null ? escape.angle : angle,
       power: escape.power,
-      nominatedColor: canNominateColor(state, stillLegal ?? escape.target) ? stillLegal ?? escape.target : null,
       spin: { x: 0, y: 0 },
       cue: cueRef,
     }
@@ -352,7 +357,6 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
     return {
       angle: safety.angle + (Math.random() - 0.5) * d.safety,
       power: safety.power,
-      nominatedColor: canNominateColor(state, safety.target) ? safety.target : null,
       spin: { x: 0, y: 0 },
       cue: cueRef,
     }
@@ -361,7 +365,6 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
   return {
     angle: Math.atan2(geo.H / 2 - cue.y, geo.W * 0.75 - cue.x),
     power: 0.85,
-    nominatedColor: targets.find((target) => canNominateColor(state, target.n))?.n ?? null,
     spin: { x: 0, y: 0 },
     cue: cueRef,
   }

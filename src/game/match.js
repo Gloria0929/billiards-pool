@@ -95,6 +95,34 @@ function buildBalls(mode, rng, geo) {
             ballPhys(),
           ),
         )
+  } else if (mode === 'nine') {
+    // 九球用菱形摆球：1 号在顶点（脚点），9 号在菱形中心，其余随机。
+    const rows = [1, 2, 3, 2, 1]
+    const slots = []
+    for (const count of rows) for (let i = 0; i < count; i++) slots.push(0)
+    slots[0] = 1
+    slots[4] = 9
+    const rest = shuffle([2, 3, 4, 5, 6, 7, 8], rng)
+    let k = 0
+    for (let i = 0; i < slots.length; i++)
+      if (!slots[i]) slots[i] = rest[k++]
+    balls = [makeBall(0, ...cueSpot(geo))]
+    const head = W * 0.72
+    const dx = R * Math.sqrt(3) * 1.002
+    let idx = 0
+    for (let row = 0; row < rows.length; row++)
+      for (let col = 0; col < rows[row]; col++)
+        balls.push(
+          makeBall(
+            slots[idx++],
+            ...rackPoint(
+              head,
+              row * dx + jit(),
+              (col - (rows[row] - 1) / 2) * 2 * R * 1.002 + jit(),
+            ),
+            ballPhys(),
+          ),
+        )
   } else {
     balls = [makeBall(0, ...cueSpot(geo))]
     for (let n = 16; n < 22; n++) balls.push(makeBall(n, ...colorSpot(geo, n)))
@@ -150,6 +178,7 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
     breakCrossed: [],
     breakChoice: null,
     breakMisses: [0, 0],
+    nineFouls: [0, 0],
     sn: {
       score: [0, 0],
       onRed: true,
@@ -171,14 +200,15 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
 
 // 开球失机后按乔氏规则重新摆球，由指定一方重新开球。
 export function rerackPool(state, breakerSeat = 0) {
-  if (!state || state.mode !== 'pool') return state
-  const geo = state.geo || getGeometry('pool')
+  if (!state || (state.mode !== 'pool' && state.mode !== 'nine')) return state
+  const geo = state.geo || getGeometry(state.mode)
   const seed = (Math.random() * 2 ** 32) >>> 0
-  state.balls = buildBalls('pool', mulberry32(seed), geo)
+  state.balls = buildBalls(state.mode, mulberry32(seed), geo)
   state.seed = seed
   state.turn = state.opener = breakerSeat === 1 ? 1 : 0
   state.quietShots = 0
   state.grp = [null, null]
+  state.nineFouls = [0, 0]
   state.inHand = true
   state.inHandLine = true
   state.breakShot = true
@@ -237,7 +267,7 @@ export function resolveFrameChoice(state, decision, freeBall) {
     state.message = `${playerLabel(state, state.turn)}继续击球`
     return state
   }
-  if (state.mode === 'pool') return rerackPool(state, state.opener)
+  if (state.mode !== 'snk') return rerackPool(state, state.opener)
   if (state.sn.decider) {
     const black = state.balls.find((ball) => ball.n === 21)
     ;[black.x, black.y] = colorSpot(state.geo, 21)
@@ -303,7 +333,6 @@ export function launchShot(state, shot) {
 
   // 记录出杆前的球位与目标状态，供斯诺克犯规后的“重打 / 复位”使用。
   state.shotStart = captureShotStart(state)
-  state.nominatedColor = shot.nominatedColor ?? null
   state.shotAngle = angle
 
   const speed =
@@ -326,7 +355,7 @@ export function launchShot(state, shot) {
   state.railBalls = []
   state.railAfterContact = false
   state.breakCrossed = []
-  state.frozenRails = state.mode === 'pool' && !state.breakShot
+  state.frozenRails = state.mode !== 'snk' && !state.breakShot
     ? frozenCushions(geo, state.balls)
     : null
   state.offTable = []
@@ -389,6 +418,7 @@ export function publicState(state) {
         }
       : null,
     breakMisses: [...(state.breakMisses || [0, 0])],
+    nineFouls: [...(state.nineFouls || [0, 0])],
     sn: {
       score: [...state.sn.score],
       onRed: state.sn.onRed,
@@ -441,6 +471,7 @@ export function hydrateState(data) {
   state.breakMisses = Array.isArray(state.breakMisses)
     ? state.breakMisses
     : [0, 0]
+  state.nineFouls = Array.isArray(state.nineFouls) ? state.nineFouls : [0, 0]
   return state
 }
 

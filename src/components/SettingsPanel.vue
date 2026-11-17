@@ -40,40 +40,43 @@ onBeforeUnmount(() => {
     class="settings-panel"
     aria-label="游戏设置"
   >
-    <h4>设置</h4>
+    <header class="settings-head">
+      <h4>设置</h4>
+      <button class="settings-close" aria-label="关闭设置" @click="actions.closeSettings">
+        ✕
+      </button>
+    </header>
     <div class="setting-row">
       <div class="setting-text">
         <b>辅助线</b>
-        <small>{{
-          guideLocked ? '开启或关闭由房主设置' : '显示瞄准路线和进袋提示'
-        }}</small>
+        <small>{{ guideLocked ? '由房主统一设置' : '瞄准路线与进袋提示' }}</small>
       </div>
       <button
-        class="setting-switch"
-        :aria-pressed="ui.showGuide"
+        class="switch"
+        role="switch"
+        aria-label="辅助线"
+        :aria-checked="ui.showGuide"
         :disabled="guideLocked"
         @click="actions.toggleGuide"
       >
-        {{ ui.showGuide ? '开' : '关' }}
+        <span class="switch-track"><span class="switch-knob"></span></span>
       </button>
     </div>
     <div class="setting-row">
       <div class="setting-text">
         <b>辅助线模式</b>
         <small>
-          {{ ui.guideMode === 'simple' ? '只显示白球路线' : '显示白球与目标球路线' }}
+          {{ ui.guideMode === 'simple' ? '只显示白球路线' : '白球与目标球路线' }}
         </small>
       </div>
-      <div class="setting-guide-modes" role="group" aria-label="辅助线显示模式">
+      <div class="mini-segments" role="group" aria-label="辅助线显示模式">
         <button
-          class="setting-switch"
           :aria-pressed="ui.guideMode === 'simple'"
           @click="actions.setGuideMode('simple')"
         >
           简易
         </button>
         <button
-          class="setting-switch"
           :aria-pressed="ui.guideMode === 'full'"
           @click="actions.setGuideMode('full')"
         >
@@ -87,12 +90,14 @@ onBeforeUnmount(() => {
         <small>击球、碰撞与入袋实录音效</small>
       </div>
       <button
-        class="setting-switch"
-        :aria-pressed="!ui.audio.muted"
+        class="switch"
+        role="switch"
+        :aria-checked="!ui.audio.muted && !ui.audio.unavailable"
+        aria-label="音效"
         :disabled="ui.audio.unavailable"
         @click="actions.toggleMute"
       >
-        {{ ui.audio.unavailable ? '不可用' : ui.audio.muted ? '关' : '开' }}
+        <span class="switch-track"><span class="switch-knob"></span></span>
       </button>
     </div>
     <label class="setting-volume">
@@ -111,7 +116,7 @@ onBeforeUnmount(() => {
       试听击球
     </button>
     <p class="audio-credit">
-      实录音效 · 光厂<br />限个人非商业学习、研究与交流
+      实录音效 · 光厂 · 限个人非商业学习、研究与交流
     </p>
   </aside>
 </template>

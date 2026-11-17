@@ -1,14 +1,10 @@
 import { BX, DR, MODES } from './constants.js'
 
 const geometryCache = new Map()
+export const CUSHION_DEPTH = 50
 
-function cushionEdgesFor({ W, H, gC, gS, py, PR }) {
-  const t = 50
-  const edges = []
-  const cu = (points) => {
-    for (let i = 0; i < points.length; i++)
-      edges.push([points[i], points[(i + 1) % points.length]])
-  }
+function cushionsFor({ W, H, gC, gS, py, PR }) {
+  const t = CUSHION_DEPTH
   const fc = Math.max(
     0,
     Math.min(t, gC - Math.sqrt(Math.max(0, (PR[0][2] * 0.85 + 3) ** 2 - t * t))),
@@ -25,26 +21,27 @@ function cushionEdgesFor({ W, H, gC, gS, py, PR }) {
   )
   const hw = W / 2
   const hr = (u0, u1, y0, sg, a, b) =>
-    cu([
+    [
       [u0, y0],
       [u1, y0],
       [u1 + b, y0 + sg * t],
       [u0 - a, y0 + sg * t],
-    ])
+    ]
   const vr = (v0, v1, x0, sg, a, b) =>
-    cu([
+    [
       [x0, v0],
       [x0, v1],
       [x0 + sg * t, v1 + b],
       [x0 + sg * t, v0 - a],
-    ])
-  hr(gC, hw - gS, 0, -1, fc, fd)
-  hr(hw + gS, W - gC, 0, -1, fd, fc)
-  hr(gC, hw - gS, H, 1, fc, fd)
-  hr(hw + gS, W - gC, H, 1, fd, fc)
-  vr(gC, H - gC, 0, -1, fc, fc)
-  vr(gC, H - gC, W, 1, fc, fc)
-  return edges
+    ]
+  return [
+    hr(gC, hw - gS, 0, -1, fc, fd),
+    hr(hw + gS, W - gC, 0, -1, fd, fc),
+    hr(gC, hw - gS, H, 1, fc, fd),
+    hr(hw + gS, W - gC, H, 1, fd, fc),
+    vr(gC, H - gC, 0, -1, fc, fc),
+    vr(gC, H - gC, W, 1, fc, fc),
+  ]
 }
 
 export function getGeometry(mode = 'pool') {
@@ -59,6 +56,7 @@ export function getGeometry(mode = 'pool') {
     [W / 2, H + c.py, c.ps],
     [W, H, c.pc],
   ]
+  const cushions = cushionsFor({ W, H, gC, gS, py: c.py, PR })
   const geo = {
     mode,
     W,
@@ -68,7 +66,10 @@ export function getGeometry(mode = 'pool') {
     gS,
     py: c.py,
     PR,
-    cushionEdges: cushionEdgesFor({ W, H, gC, gS, py: c.py, PR }),
+    cushions,
+    cushionEdges: cushions.flatMap((points) =>
+      points.map((point, index) => [point, points[(index + 1) % points.length]]),
+    ),
   }
   geometryCache.set(mode, geo)
   return geo

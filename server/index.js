@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { createMatch, offerStalemate, publicState, resolveBreakChoice, resolveFrameChoice, simulateShot } from '../src/game/match.js'
 import {
-  canNominateColor,
   offerConcession,
   snookerPointsRemaining,
 } from '../src/game/rules.js'
@@ -280,7 +279,6 @@ function sanitizeShot(raw) {
     power: clamp(power, 0, 1),
     spin,
     cue,
-    nominatedColor: Number.isInteger(raw.nominatedColor) ? raw.nominatedColor : null,
   }
 }
 
@@ -336,7 +334,12 @@ function handleMessage(ws, message) {
       send(ws, { type: 'error', message: '房间已满，请稍后再试。' })
       return
     }
-    const mode = message.mode === 'snk' ? 'snk' : 'pool'
+    const mode =
+      message.mode === 'snk'
+        ? 'snk'
+        : message.mode === 'nine'
+          ? 'nine'
+          : 'pool'
     const visibility = message.visibility === 'private' ? 'private' : 'public'
     const bestOf = normalizeBestOf(message.bestOf)
     const code = makeCode()
@@ -507,11 +510,6 @@ function handleMessage(ws, message) {
     const shot = sanitizeShot(message.shot)
     if (!shot) {
       send(ws, { type: 'error', message: '击球参数无效。' })
-      return
-    }
-    if (shot.nominatedColor !== null && !canNominateColor(room.state, shot.nominatedColor)) {
-      send(ws, { type: 'error', message: '指定的彩球无效。' })
-      send(ws, { type: 'state', state: publicState(room.state) })
       return
     }
     if (room.state.inHand && shot.cue && !canPlaceCue(room.state, shot.cue.x, shot.cue.y)) {
