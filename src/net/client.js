@@ -2,7 +2,6 @@ export class NetClient {
   constructor() {
     this.ws = null
     this.listeners = new Map()
-    this.closedByUser = false
     this.ready = null
   }
 
@@ -25,7 +24,6 @@ export class NetClient {
   connect() {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING))
       return this.ready
-    this.closedByUser = false
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
     const url = `${protocol}://${location.host}/ws`
     let socket
@@ -38,6 +36,7 @@ export class NetClient {
     this.ws = socket
     this.ready = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        if (this.ws !== socket) return reject(new Error('closed'))
         reject(new Error('timeout'))
         try {
           socket.close()
@@ -45,10 +44,12 @@ export class NetClient {
       }, 8000)
       socket.addEventListener('open', () => {
         clearTimeout(timer)
+        if (this.ws !== socket) return reject(new Error('closed'))
         this.emit('open')
         resolve()
       })
       socket.addEventListener('message', (event) => {
+        if (this.ws !== socket) return
         let message
         try {
           message = JSON.parse(event.data)
@@ -60,22 +61,23 @@ export class NetClient {
       })
       socket.addEventListener('close', () => {
         clearTimeout(timer)
+        if (this.ws !== socket) return reject(new Error('closed'))
         this.ws = null
-        const wasUser = this.closedByUser
-        this.closedByUser = false
-        if (!wasUser) this.emit('disconnect')
+        reject(new Error('network'))
+        this.emit('disconnect')
       })
       socket.addEventListener('error', () => {
         clearTimeout(timer)
-        reject(new Error('network'))
+        reject(new Error(this.ws === socket ? 'network' : 'closed'))
       })
     }).catch((error) => {
-      this.emit('error', {
-        message:
-          error?.message === 'timeout'
+      if (error.message !== 'closed' && (!this.ws || this.ws === socket)) {
+        this.emit('error', {
+          message: error.message === 'timeout'
             ? '连接服务器超时，请确认联机服务已启动。'
             : '无法连接联机服务器。',
-      })
+        })
+      }
       throw error
     })
     return this.ready
@@ -91,10 +93,10 @@ export class NetClient {
   }
 
   close() {
-    this.closedByUser = true
-    try {
-      this.ws?.close()
-    } catch (_) {}
+    const socket = this.ws
     this.ws = null
+    try {
+      socket?.close()
+    } catch (_) {}
   }
 }

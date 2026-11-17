@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import OnlinePanel from "./OnlinePanel.vue";
 import GameLobby from "./GameLobby.vue";
 import { MATCH_FORMATS, formatLabel } from "../game/series.js";
@@ -10,6 +10,10 @@ const props = defineProps({
 });
 
 const tab = ref("local");
+watch(() => props.ui.menu.kind, (kind) => {
+  if (kind === "lobby") tab.value = "lobby";
+  else if (kind === "start") tab.value = "local";
+});
 
 const difficultyNote = computed(
   () =>
@@ -32,12 +36,15 @@ const freeBallColors = computed(() => {
 });
 
 const showModes = computed(() =>
-  ["start", "paused"].includes(props.ui.menu.kind),
+  ["start", "paused", "lobby"].includes(props.ui.menu.kind),
 );
 const frontRoom = computed(() =>
   showModes.value || ["online", "local-over", "online-over", "online-left"].includes(props.ui.menu.kind),
 );
 const outcome = computed(() => props.ui.menu.kind.endsWith("-over"));
+const matchScore = computed(() =>
+  props.ui.match.bestOf > 1 && (props.ui.match.over || props.ui.mode !== "snk"),
+);
 const compactMenu = computed(() =>
   ["break-choice", "foul-choice", "free-ball"].includes(props.ui.menu.kind),
 );
@@ -69,27 +76,15 @@ const opponentReady = computed(
 const rematchText = computed(() => {
   if (meReady.value) return "已准备，等待对手…";
   if (opponentReady.value) return "对手已经准备好，就等你了。";
-  if ((props.ui.match?.bestOf || 1) === 1)
-    return "双方都点击「再来一局」后，会重新摆球开始新一局。";
-  if (props.ui.match?.over) return "双方都点击「再来一场」后，开始新一场比赛。";
   return "双方都点击「下一局」后，进入下一局。";
-});
-const replayLabel = computed(() => {
-  if (meReady.value) return "已准备，等待对手";
-  if ((props.ui.match?.bestOf || 1) === 1) return "再来一局";
-  if (props.ui.match?.over) return "再来一场";
-  return "下一局";
-});
-const localReplayLabel = computed(() => {
-  if ((props.ui.match?.bestOf || 1) === 1) return "再来一局";
-  if (props.ui.match?.over) return "再来一场";
-  return "下一局";
 });
 const panelTitle = computed(() => {
   if (outcome.value) {
     if (props.ui.winner < 0) return "本局平局";
     const name = props.ui.names?.[props.ui.winner] || "玩家" + (props.ui.winner + 1);
-    return `${name}获胜`;
+    return props.ui.match.over && props.ui.match.bestOf > 1
+      ? `${name}赢得整场比赛`
+      : `${name}获胜`;
   }
   if (props.ui.menu.kind === "online" && props.ui.online.status === "room") return "对战房间";
   if (!showModes.value) return props.ui.menu.title;
@@ -101,7 +96,8 @@ const panelIntro = computed(() => {
   if (outcome.value) {
     const message = props.ui.menu.title;
     const detail = message.match(/[（(](.+)[）)]$/)?.[1];
-    return detail && !/^\d+\s*:\s*\d+$/.test(detail) ? detail : "";
+    if (detail && !/^\d+\s*:\s*\d+$/.test(detail)) return detail;
+    return props.ui.match.over && props.ui.match.bestOf === 1 ? "比赛结束。" : "";
   }
   if (!showModes.value || props.ui.menu.kind === "paused") return props.ui.menu.intro;
   if (tab.value === "lobby") return "找一间公开房，向房主申请加入。";
@@ -113,10 +109,6 @@ function openOnlineFromLobby() {
   tab.value = "online";
 }
 
-function returnToLobby() {
-  props.actions.backToLobby();
-  tab.value = "lobby";
-}
 </script>
 
 <template>
@@ -306,47 +298,48 @@ function returnToLobby() {
         </template>
 
         <template v-else-if="ui.menu.kind === 'online'">
-          <OnlinePanel :ui="ui" :actions="actions" @browse="returnToLobby" />
+          <OnlinePanel :ui="ui" :actions="actions" @browse="actions.leaveRoom" />
         </template>
 
         <template v-else-if="outcome">
-          <div v-if="ui.mode === 'snk' || ui.match.bestOf > 1" class="result-scoreboard" aria-label="本场比分">
+          <div v-if="ui.mode === 'snk' || matchScore" class="result-scoreboard" :aria-label="matchScore ? '局分' : '本局得分'">
             <div v-for="seat in [0, 1]" :key="seat" class="result-score" :class="{ winner: ui.winner === seat }">
               <span>{{ ui.names?.[seat] || "玩家" + (seat + 1) }}</span>
-              <strong>{{ ui.mode === 'snk' ? ui.scores[seat] : ui.match.wins[seat] }}</strong>
+              <strong>{{ matchScore ? ui.match.wins[seat] : ui.scores[seat] }}</strong>
             </div>
           </div>
           <p v-if="ui.match.bestOf > 1" class="match-line">
-            第 {{ ui.match.frame }} 局 · {{ formatLabel(ui.match.bestOf) }}
-            <template v-if="ui.mode === 'snk'">
+            {{ ui.match.over ? "比赛结束" : `第 ${ui.match.frame} 局结束` }} · {{ formatLabel(ui.match.bestOf) }}
+            <template v-if="!matchScore">
               · 局分 {{ ui.match.wins[0] }} : {{ ui.match.wins[1] }}
             </template>
           </p>
           <div v-if="ui.menu.kind === 'local-over'" class="room-actions">
-            <button id="local-again" class="front-primary" @click="actions.playAgainLocal">
-              {{ localReplayLabel }}
+            <button v-if="!ui.match.over" id="local-again" class="front-primary" @click="actions.playAgainLocal">
+              下一局
             </button>
-            <button @click="actions.exitToHome">返回首页</button>
+            <button :class="{ 'front-primary': ui.match.over }" @click="actions.exitToHome">返回首页</button>
           </div>
           <template v-else>
             <div class="room-actions">
               <button
+                v-if="!ui.match.over"
                 id="start-online"
                 class="front-primary"
                 :disabled="meReady"
                 @click="actions.requestRematch"
               >
-                {{ replayLabel }}
+                {{ meReady ? "已准备，等待对手" : "下一局" }}
               </button>
-              <button @click="returnToLobby">返回大厅</button>
+              <button :class="{ 'front-primary': ui.match.over }" @click="actions.leaveRoom">返回大厅</button>
             </div>
-            <p class="rematch-note">{{ rematchText }}</p>
+            <p v-if="!ui.match.over" class="rematch-note">{{ rematchText }}</p>
           </template>
         </template>
 
         <template v-else-if="ui.menu.kind === 'online-left'">
           <div class="room-actions">
-            <button @click="returnToLobby">返回大厅</button>
+            <button @click="actions.leaveRoom">返回大厅</button>
           </div>
         </template>
 

@@ -215,7 +215,8 @@ function leaveRoom(ws, notify = true) {
     // 房主离开即关闭房间，避免留下无法审批的公开房。
     const other = room.clients[1]
     if (other) {
-      send(other, { type: 'room-closed', message: '房主已离开，房间已关闭。' })
+      if (!room.match.over)
+        send(other, { type: 'room-closed', message: '房主已离开，房间已关闭。' })
       other.room = null
       other.seat = null
     }
@@ -225,7 +226,7 @@ function leaveRoom(ws, notify = true) {
     return
   }
   const other = room.clients[0]
-  if (notify) {
+  if (notify && !room.match.over) {
     if (other) send(other, { type: 'peer', event: 'left' })
     broadcastRoom(room)
   }
@@ -413,6 +414,11 @@ function handleMessage(ws, message) {
 
   if (type === 'cancel-join') {
     cancelPending(ws)
+    return
+  }
+
+  if (type === 'leave') {
+    leaveRoom(ws)
     return
   }
 
@@ -686,10 +692,13 @@ function handleMessage(ws, message) {
       return
     }
     recordMatchResult(room)
+    if (room.match.over) {
+      send(ws, { type: 'error', message: '整场比赛已结束。' })
+      return
+    }
     room.rematch[ws.seat] = true
     broadcastRoom(room)
-    if (room.rematch[0] && room.rematch[1]) {
-      advanceSeries(room.match)
+    if (room.rematch[0] && room.rematch[1] && advanceSeries(room.match)) {
       const state = newMatch(room)
       broadcastRoom(room)
       broadcast(room, {
@@ -699,11 +708,6 @@ function handleMessage(ws, message) {
         match: publicSeries(room.match),
       })
     }
-    return
-  }
-
-  if (type === 'leave') {
-    leaveRoom(ws)
     return
   }
 

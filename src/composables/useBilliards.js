@@ -173,10 +173,9 @@ export function useBilliards() {
     aimTimer = null
     clearAiTimer()
     document.removeEventListener('keydown', onEscape)
-    if (ui.online.status !== 'idle') {
-      net?.send({ type: 'leave' })
-      net?.close()
-    }
+    if (ui.online.status !== 'idle' && net?.ws?.readyState === 1)
+      net.send({ type: 'leave' })
+    net?.close()
     engine?.dispose()
     engine = null
   })
@@ -250,32 +249,11 @@ export function useBilliards() {
 
   function openOverlayForResult() {
     if (ui.online.status === 'playing') {
-      const match = ui.match
-      const extra =
-        match.bestOf > 1
-          ? `${match.over ? '比赛结束' : `第 ${match.frame} 局结束`} · 局分 ${match.wins[0]} : ${match.wins[1]}`
-          : '本局已结束'
-      showMenu(
-        'online-over',
-        state.message || '本局结束',
-        `${extra}。双方都准备后${
-          match.over
-            ? '开始新一场比赛'
-            : match.bestOf > 1
-              ? '进入下一局'
-              : '重新开球'
-        }。`,
-      )
+      showMenu('online-over', state.message || '本局结束', '')
       return
     }
     recordFrameResult(localSeries, state.winner)
-    syncUi()
-    const match = ui.match
-    const extra =
-      match.bestOf > 1
-        ? `${match.over ? '比赛结束' : `第 ${match.frame} 局结束`} · 局分 ${match.wins[0]} : ${match.wins[1]}`
-        : '本局已结束'
-    showMenu('local-over', state.message || '本局结束', `${extra}。`)
+    showMenu('local-over', state.message || '本局结束', '')
   }
 
   /* ---------- 本地对局 ---------- */
@@ -293,7 +271,7 @@ export function useBilliards() {
   }
 
   function startLocal() {
-    if (ui.online.status !== 'idle') leaveRoom(true)
+    if (ui.online.status !== 'idle') resetOnlineRoom()
     localSeries = createSeries(ui.bestOf)
     startLocalFrame()
   }
@@ -317,8 +295,8 @@ export function useBilliards() {
   }
 
   function playAgainLocal() {
-    if (ui.online.status !== 'idle') return
-    advanceSeries(localSeries)
+    if (ui.online.status !== 'idle' || state?.phase !== 'over') return
+    if (!advanceSeries(localSeries)) return
     startLocalFrame()
   }
 
@@ -732,7 +710,6 @@ export function useBilliards() {
     if (ui.online.status === 'playing') {
       if (pendingServer) {
         applyServerState(pendingServer)
-        pendingServer = null
       } else {
         ui.online.waiting = true
         syncUi()
@@ -759,8 +736,9 @@ export function useBilliards() {
     maybeScheduleAi()
   }
 
-  function applyServerState(next) {
+  function applyServerState({ state: next, match }) {
     state = hydrateState(next)
+    if (match) ui.match = publicSeries(match)
     ui.online.waiting = false
     pendingServer = null
     engine.applyState(state)
@@ -786,20 +764,24 @@ export function useBilliards() {
     if (connectPromise) return connectPromise
     ui.online.status = 'connecting'
     ui.online.error = ''
-    connectPromise = net.connect()
+    const connection = net.connect()
       .then(() => {
+        if (connectPromise !== connection) throw new Error('connect cancelled')
         ui.online.connected = true
         if (ui.online.status === 'connecting') ui.online.status = 'idle'
       })
       .catch(() => {
-        ui.online.status = 'idle'
-        ui.online.connected = false
+        if (connectPromise === connection) {
+          ui.online.status = 'idle'
+          ui.online.connected = false
+        }
         throw new Error('connect failed')
       })
       .finally(() => {
-        connectPromise = null
+        if (connectPromise === connection) connectPromise = null
       })
-    return connectPromise
+    connectPromise = connection
+    return connection
   }
 
   function createRoom() {
@@ -871,9 +853,10 @@ export function useBilliards() {
   }
 
   function requestRematch() {
-    if (ui.online.status !== 'playing') return
-    net.send({ type: 'rematch' })
-    if (ui.online.seat != null) ui.online.rematch[ui.online.seat] = true
+    if (ui.online.status !== 'playing' || state?.phase !== 'over' || ui.match.over) return
+    const seat = ui.online.seat
+    if (seat == null || ui.online.rematch[seat]) return
+    if (net.send({ type: 'rematch' })) ui.online.rematch[seat] = true
   }
 
   function publishAim() {
@@ -890,10 +873,11 @@ export function useBilliards() {
     if (net.send({ type: 'aim', aim })) lastAimPayload = payload
   }
 
-  function leaveRoom(silent = false) {
-    clearAiTimer()
-    if (!silent) net?.send({ type: 'leave' })
+  function resetOnlineRoom() {
+    if (ui.online.status !== 'idle' && net?.ws?.readyState === 1)
+      net.send({ type: 'leave' })
     net?.close()
+    connectPromise = null
     ui.online.status = 'idle'
     ui.online.connected = false
     ui.online.code = ''
@@ -913,15 +897,14 @@ export function useBilliards() {
       preOnlineGuide = null
     }
     ui.online.guide = true
-    const preview = createMatch(ui.selectedMode)
-    state = preview
+  }
+
+  function leaveRoom() {
+    clearAiTimer()
+    resetOnlineRoom()
+    state = createMatch(ui.selectedMode)
     engine.loadMatch(state)
-    ui.menu.kind = 'start'
-    ui.menu.title = '选一张球桌，开局。'
-    ui.menu.intro = '一杆的手感，一局的较量。选择你想玩的台球。'
-    engine.setOverlayOpen(true)
-    ui.menu.visible = true
-    syncUi()
+    showMenu('lobby', '游戏大厅', '')
   }
 
   function bindNet(client) {
@@ -935,7 +918,9 @@ export function useBilliards() {
         message.visibility === 'private' ? 'private' : 'public'
       ui.online.requests = []
       ui.online.connected = true
-      if (message.match) ui.match = publicSeries(message.match)
+      // 对局中的局分随击球结果一起同步，房间通知可能先到。
+      if (message.match && (!message.started || state?.phase === 'over'))
+        ui.match = publicSeries(message.match)
       ui.online.error = ''
       ui.selectedMode = message.mode
       ui.online.status = message.started ? 'playing' : 'room'
@@ -988,7 +973,7 @@ export function useBilliards() {
       ui.online.status = 'requesting'
       ui.online.code = message.code || ''
       ui.online.error = ''
-      if (!['start', 'paused'].includes(ui.menu.kind)) {
+      if (!['start', 'paused', 'lobby'].includes(ui.menu.kind)) {
         ui.menu.kind = 'online'
         ui.menu.title = '申请已发送。'
         ui.menu.intro = '等待房主同意你的加入申请。'
@@ -1052,22 +1037,18 @@ export function useBilliards() {
 
     client.on('shot', (message) => {
       if (ui.online.status !== 'playing') return
-      if (message.match) ui.match = publicSeries(message.match)
       const mine = message.seat === ui.online.seat
       if (mine) {
-        pendingServer = message.state
-        if (!engine.animating && !engine.striking) {
-          applyServerState(pendingServer)
-          pendingServer = null
-        }
+        if (engine.animating || engine.striking) pendingServer = message
+        else applyServerState(message)
         return
       }
       if (engine.animating) {
-        pendingServer = message.state
+        pendingServer = message
         return
       }
       if (state.phase !== 'aim') {
-        applyServerState(message.state)
+        applyServerState(message)
         return
       }
       if (state.inHand && message.shot.cue) {
@@ -1076,19 +1057,18 @@ export function useBilliards() {
         cue.y = message.shot.cue.y
         engine.applyState(state)
       }
-      pendingServer = message.state
+      pendingServer = message
       engine.playShot(message.shot)
       syncUi()
     })
 
     client.on('state', (message) => {
       if (ui.online.status !== 'playing') return
-      if (message.match) ui.match = publicSeries(message.match)
       if (engine.animating || engine.striking) {
-        pendingServer = message.state
+        pendingServer = message
         return
       }
-      applyServerState(message.state)
+      applyServerState(message)
     })
 
     client.on('peer', (message) => {
@@ -1128,9 +1108,9 @@ export function useBilliards() {
     })
 
     client.on('disconnect', () => {
-      if (ui.online.status === 'idle') return
-      ui.online.status = 'idle'
       ui.online.connected = false
+      if (!['room', 'playing', 'requesting'].includes(ui.online.status)) return
+      ui.online.status = 'idle'
       ui.online.waiting = false
       ui.online.error = '与联机服务器的连接已断开。'
       showMenu(
@@ -1139,10 +1119,6 @@ export function useBilliards() {
         '请检查网络后重新进入联机大厅。',
       )
     })
-  }
-
-  function backToLobby() {
-    leaveRoom()
   }
 
   /* ---------- 控制面板 ---------- */
@@ -1211,7 +1187,6 @@ export function useBilliards() {
       playAgainLocal,
       exitToHome,
       leaveRoom,
-      backToLobby,
       setView,
       zoom,
       resetView,

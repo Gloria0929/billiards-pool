@@ -551,11 +551,11 @@ export function createTable(geo, maps) {
     pocketDark: new THREE.MeshBasicMaterial({ color: surfaceColor(0x100d0b) }),
   }
   const cloth = new THREE.MeshPhysicalMaterial({
-    color: surfaceColor(0x166139), roughness: 0.97, bumpMap: maps.cloth, bumpScale: 0.47,
-    sheen: surfaceColor(0x192f22), reflectivity: 0.21, envMapIntensity: 0.32,
+    color: surfaceColor(0x284b3b), roughness: 0.97, bumpMap: maps.cloth, bumpScale: 0.47,
+    sheen: surfaceColor(0x202a24), reflectivity: 0.21, envMapIntensity: 0.23,
   })
   const cushion = cloth.clone()
-  cushion.color = surfaceColor(0x1a6139)
+  cushion.color = surfaceColor(0x284e3d)
   cushion.side = THREE.DoubleSide
   const foldedCloth = cushion.clone()
   foldedCloth.color.multiplyScalar(0.68)

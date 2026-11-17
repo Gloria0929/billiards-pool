@@ -29,7 +29,7 @@ export function createSeries(bestOf = 1) {
 
 // 记录本局胜者；同一局只记录一次。
 export function recordFrameResult(series, winner) {
-  if (!series || series.recorded) return false
+  if (!series || series.over || series.recorded) return false
   if (winner !== 0 && winner !== 1) return false
   series.recorded = true
   series.wins[winner] += 1
@@ -37,18 +37,12 @@ export function recordFrameResult(series, winner) {
   return true
 }
 
-// 进入下一局；比赛结束后重新开始一个同赛制的新比赛。
+// 只有赛制内尚未打完的比赛才能进入下一局。
 export function advanceSeries(series) {
-  if (!series) return
-  if (series.over) {
-    series.wins = [0, 0]
-    series.over = false
-    series.frame = 1
-    series.breakMisses = [0, 0]
-  } else {
-    series.frame += 1
-  }
+  if (!series || series.over || !series.recorded) return false
+  series.frame += 1
   series.recorded = false
+  return true
 }
 
 export function publicSeries(series) {

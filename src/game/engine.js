@@ -10,6 +10,7 @@ import * as audio from './audio.js'
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z)
+const POCKET_DROP_TIME = 0.5
 
 // 九球专用配色（0 为白球，1-8 为 1-8 号球，9 号由白底 + 1 号色条纹生成）
 const NINE_COL = [
@@ -265,6 +266,17 @@ export class BilliardsEngine {
     this.cueGroup.add(this.cueShaft, this.cueButt)
     this.scene.add(this.cueGroup)
 
+    this.cueContactMark = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 12, 8),
+      new THREE.MeshBasicMaterial({
+        color: surfaceColor(0xe96450), toneMapped: false,
+        depthTest: false, depthWrite: false, transparent: true,
+      }),
+    )
+    this.cueContactMark.visible = false
+    this.cueContactMark.renderOrder = 2
+    this.scene.add(this.cueContactMark)
+
     this.spinQuat = new THREE.Quaternion()
     this.spinAxis = new THREE.Vector3()
     this.resize()
@@ -435,6 +447,10 @@ export class BilliardsEngine {
       this.meshes.set(ball.n, entry)
     }
     this.animating = false
+    this.striking = false
+    this.strikeT = 0
+    this.strikeProgress = 0
+    this.pendingShot = null
     this.acc = 0
     if (!keepPlayerAim) {
       this.playerPower = null
@@ -634,9 +650,8 @@ export class BilliardsEngine {
       if (ball.on) {
         m.visible = true
         m.position.set(tx(ball.x), R, tz(ball.y))
-      } else if (ball.st < 0.5 && ball.q) {
-        ball.st = Math.min(0.5, ball.st + (this.overlayOpen ? 0 : dt))
-        const k = ball.st / 0.5
+      } else if (ball.q && ball.st < POCKET_DROP_TIME) {
+        const k = ball.st / POCKET_DROP_TIME
         const travel = 1 - Math.exp(-k * 4)
         m.visible = true
         m.position.set(
@@ -666,9 +681,12 @@ export class BilliardsEngine {
 
     const dragging = this.drag && state.phase === 'aim'
     const showCue = state.phase === 'aim' && cue.on && !dragging
+    const { x: sideSpin, y: verticalSpin } = this.spin
+    const showContact = showCue && (sideSpin !== 0 || verticalSpin !== 0)
     this.aimGroup.visible =
       this.showGuide && state.phase === 'aim' && cue.on && !dragging
     this.cueGroup.visible = showCue
+    this.cueContactMark.visible = showContact
     if (showCue) {
       const dx = Math.cos(this.angle)
       const dy = Math.sin(this.angle)
@@ -709,10 +727,21 @@ export class BilliardsEngine {
         )
       }
       const strike = this.strikeProgress
-      const gap = R + 3 + (11 + this.power * 260) * (1 - strike * strike)
+      const gap = 3 + (11 + this.power * 260) * (1 - strike * strike)
       const th = this.cueTilt(cue, dx, dy)
       const axis = V3(dx * Math.cos(th), -Math.sin(th), -dy * Math.cos(th))
-      this.cueGroup.position.set(tx(cue.x), R, tz(cue.y)).addScaledVector(axis, -gap)
+      const contact = P(cue.x, cue.y)
+      if (showContact) {
+        const right = V3(dy, 0, dx)
+        const up = right.clone().cross(axis)
+        const depth = R * Math.sqrt(1 - sideSpin ** 2 - verticalSpin ** 2)
+        contact.addScaledVector(right, R * sideSpin)
+          .addScaledVector(up, R * verticalSpin)
+          .addScaledVector(axis, -depth)
+        this.cueContactMark.position.copy(contact)
+        this.cueContactMark.scale.setScalar(R * 0.13)
+      } else contact.addScaledVector(axis, -R)
+      this.cueGroup.position.copy(contact).addScaledVector(axis, -gap)
       this.cueGroup.quaternion.setFromUnitVectors(Y_AXIS, axis)
       this.cueTh = th
     }
@@ -807,7 +836,7 @@ export class BilliardsEngine {
     if (this.animating && this.state && !this.overlayOpen) {
       this.acc += dt
       const t0 = this.simTime
-      while (this.acc >= DT) {
+      while (this.acc >= DT && this.animSteps < MAX_SIM_STEPS && moving(this.state.balls)) {
         step(this.state)
         this.acc -= DT
         this.simTime += DT
@@ -815,14 +844,21 @@ export class BilliardsEngine {
       }
       const elapsed = this.simTime - t0
       let maxSpeed = 0
+      let dropping = false
       for (const ball of this.state.balls) {
-        if (!ball.on) continue
+        if (!ball.on) {
+          if (ball.q && ball.st < POCKET_DROP_TIME) {
+            ball.st = Math.min(POCKET_DROP_TIME, ball.st + dt)
+            if (ball.st < POCKET_DROP_TIME) dropping = true
+          }
+          continue
+        }
         this.spinBall(ball, elapsed)
         maxSpeed = Math.max(maxSpeed, Math.hypot(ball.vx, ball.vy))
       }
       this.drainEvents()
       audio.rollSound(maxSpeed)
-      if (!moving(this.state.balls) || this.animSteps >= MAX_SIM_STEPS) {
+      if (!dropping && (!moving(this.state.balls) || this.animSteps >= MAX_SIM_STEPS)) {
         this.animating = false
         this.acc = 0
         audio.rollSound(0)
@@ -1302,6 +1338,7 @@ export class BilliardsEngine {
     if (this.tg) this.disposeGroup(this.tg)
     if (this.sg) this.sg.dispose()
     if (this.tableStage) this.disposeGroup(this.tableStage)
+    if (this.cueContactMark) this.disposeGroup(this.cueContactMark)
     this.tableMapTextures?.forEach((map) => map.dispose())
     this.sun?.shadow.dispose()
     this.tableEnvironment?.dispose()
