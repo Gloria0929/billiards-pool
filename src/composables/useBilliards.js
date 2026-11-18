@@ -263,12 +263,12 @@ export function useBilliards() {
     ui.selectedMode = mode
   }
 
-  // 没有个人力度记录时，开球默认满力。
+  // 没有个人力度记录时，使用当前玩法的开球力度。
   function primeBreakPower() {
     if (!state || !engine || engine.playerPower !== null) return
     const mySeat = ui.online.status === 'playing' ? ui.online.seat : 0
     if (state.phase === 'aim' && state.breakShot && state.turn === mySeat)
-      engine.setPower(1, false)
+      engine.setPower(MODES[state.mode].breakPower, false)
   }
 
   function startLocal() {

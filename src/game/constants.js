@@ -1,6 +1,7 @@
 export const MODES = {
   pool: {
     name: '中式八球',
+    breakPower: 1,
     W: 2540,
     H: 1270,
     R: 28.6,
@@ -12,6 +13,7 @@ export const MODES = {
   },
   snk: {
     name: '斯诺克',
+    breakPower: 0.35,
     W: 3569,
     H: 1778,
     R: 26.25,
@@ -24,6 +26,7 @@ export const MODES = {
   nine: {
     // 九球沿用中八球台，但袋口回到中八收紧前的尺寸。
     name: '九球',
+    breakPower: 1,
     W: 2540,
     H: 1270,
     R: 28.6,

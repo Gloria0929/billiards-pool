@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
-import { AIM_NUDGE, AIM_NUDGE_FINE, COL, DT, MAX_SIM_STEPS, SC, clamp } from './constants.js'
+import { AIM_NUDGE, AIM_NUDGE_FINE, COL, DT, MAX_SIM_STEPS, MODES, SC, clamp } from './constants.js'
 import { getGeometry, toWorldX, toWorldZ } from './geometry.js'
 import { canPlaceCue, moving, step } from './physics.js'
 import { buildAimGuide } from './guide.js'
@@ -1204,7 +1204,7 @@ export class BilliardsEngine {
       this.endPull(null, true)
       this.cancelSpace(true)
     } else if (enabled && !this.interactionEnabled) {
-      this.setPower(this.playerPower ?? (this.state?.breakShot ? 1 : 0.45), false)
+      this.setPower(this.playerPower ?? (this.state?.breakShot ? MODES[this.state.mode].breakPower : 0.45), false)
       this.setSpin(this.playerSpin, false)
     }
     this.interactionEnabled = enabled

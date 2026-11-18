@@ -73,3 +73,21 @@ test('a new online frame keeps the chosen settings and defaults an unplayed brea
   assert.equal(engine.power, 1)
   assert.deepEqual(engine.spin, { x: 0, y: 0 })
 })
+
+test('斯诺克开球默认 35%，观战后恢复本人力度，非开球仍用通常默认值', () => {
+  const engine = client()
+  engine.state.mode = 'snk'
+  engine.state.breakShot = true
+  engine.setInteraction(true)
+  assert.equal(engine.power, 0.35)
+  engine.setPower(0.28)
+  engine.setInteraction(false)
+  engine.applyRemoteAim({ power: 0.8 })
+  engine.setInteraction(true)
+  assert.equal(engine.power, 0.28)
+  engine.setInteraction(false)
+  engine.playerPower = null
+  engine.state.breakShot = false
+  engine.setInteraction(true)
+  assert.equal(engine.power, 0.45)
+})
