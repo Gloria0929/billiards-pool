@@ -12,6 +12,8 @@ import { createRoomShell, loadTableMaps, surfaceColor } from './table-materials.
 import { createCue } from './cue.js'
 import * as audio from './audio.js'
 import { renderQuality } from './render-quality.js'
+import { GuidePlanner } from './guide-planner.js'
+import { batchStaticMeshes } from './static-meshes.js'
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z)
@@ -238,6 +240,8 @@ export class BilliardsEngine {
     this.scene.add(this.aimGroup)
 
     this.cueGroup = createCue()
+    if (!this.quality.dynamicShadows)
+      this.cueGroup.traverse((part) => { part.castShadow = false })
     this.scene.add(this.cueGroup)
 
     this.spinQuat = new THREE.Quaternion()
@@ -355,6 +359,7 @@ export class BilliardsEngine {
     }
     const { W, H } = this.geo
     this.tg = createTable(this.geo, this.tableMaps)
+    if (this.quality?.backgroundGuide) batchStaticMeshes(this.tg)
     this.scene.add(this.tg)
     const [railX, railY] = tableMargins(this.geo)
     this.tableShadow.scale.set((W + railX * 2) * 1.48, 1, (H + railY * 2) * 1.72)
@@ -379,7 +384,8 @@ export class BilliardsEngine {
       envMapIntensity: geo.mode === 'nine' ? 0.48 : 0.66,
     })
     const mesh = new THREE.Mesh(this.sg, material)
-    mesh.castShadow = mesh.receiveShadow = true
+    mesh.castShadow = this.quality?.dynamicShadows ?? true
+    mesh.receiveShadow = true
     this.bg.add(mesh)
     const shadow = new THREE.Mesh(this.blobGeo, this.blobMat)
     shadow.renderOrder = 1
@@ -394,12 +400,18 @@ export class BilliardsEngine {
 
   loadMatch(state, { keepPlayerAim = false } = {}) {
     if (!this.renderer) return
+    this.invalidateAimGuide()
     this.state = state
-    this.geo = getGeometry(state.mode)
     this.clearBalls()
-    if (this.sg) this.sg.dispose()
-    this.sg = new THREE.SphereGeometry(this.geo.R, ...(this.quality?.ballSegments ?? [32, 24]))
-    this.buildTable()
+    const geo = getGeometry(state.mode)
+    if (!this.tg || this.geo !== geo) {
+      this.geo = geo
+      this.sg?.dispose()
+      this.sg = new THREE.SphereGeometry(geo.R, ...(this.quality?.ballSegments ?? [32, 24]))
+      this.buildTable()
+    } else if (this.quality.dynamicShadows) {
+      this.renderer.shadowMap.needsUpdate = true
+    }
     for (const ball of state.balls) {
       const entry = this.createBallMesh(ball.n)
       entry.mesh.position.set(toWorldX(this.geo, ball.x), this.geo.R, toWorldZ(this.geo, ball.y))
@@ -435,10 +447,12 @@ export class BilliardsEngine {
       this.loadMatch(state)
       return
     }
+    this.invalidateAimGuide()
     this.state = state
     this.animating = false
     this.acc = 0
-    if (this.renderer) this.renderer.shadowMap.needsUpdate = true
+    if (this.renderer && (this.quality?.dynamicShadows ?? true))
+      this.renderer.shadowMap.needsUpdate = true
     for (const ball of state.balls) {
       const entry = this.meshes.get(ball.n)
       if (!entry) continue
@@ -460,6 +474,7 @@ export class BilliardsEngine {
 
   playShot(shot) {
     if (!this.state) return
+    this.invalidateAimGuide()
     launchShot(this.state, shot)
     this.animating = true
     this.striking = false
@@ -634,7 +649,8 @@ export class BilliardsEngine {
       entry.shadow.scale.setScalar(2.7 * R)
     }
     const cue = state.balls[0]
-    if (this.animating || this.drag || this.shadowCueX !== cue.x || this.shadowCueY !== cue.y) {
+    if ((this.quality?.dynamicShadows ?? true) &&
+        (this.animating || this.drag || this.shadowCueX !== cue.x || this.shadowCueY !== cue.y)) {
       this.renderer.shadowMap.needsUpdate = true
       this.shadowCueX = cue.x
       this.shadowCueY = cue.y
@@ -643,16 +659,16 @@ export class BilliardsEngine {
     const dragging = this.drag && state.phase === 'aim'
     const showCue = state.phase === 'aim' && cue.on && !dragging
     const { x: sideSpin, y: verticalSpin } = this.spin
-    this.aimGroup.visible =
-      this.showGuide && state.phase === 'aim' && cue.on && !dragging
+    this.aimGroup.visible = false
     this.cueGroup.visible = showCue
     if (showCue) {
       const dx = Math.cos(this.angle)
       const dy = Math.sin(this.angle)
       const P = (x, y) => V3(tx(x), R, tz(y))
-      if (this.aimGroup.visible) {
+      if (this.showGuide) {
         const guide = this.getAimGuide()
-        if (guide !== this.renderedGuide) {
+        this.aimGroup.visible = !!guide
+        if (guide && guide !== this.renderedGuide) {
           this.setGuideLine(this.lineA, guide.cuePath)
           this.setGuideLine(this.lineB, guide.object)
           this.setGuideLine(this.lineC, guide.deflect)
@@ -688,23 +704,43 @@ export class BilliardsEngine {
     this.renderer.render(this.scene, this.cam)
   }
 
+  invalidateAimGuide() {
+    this.guideRevision = (this.guideRevision || 0) + 1
+    this.aimGuide = null
+    this.aimGuideKey = null
+  }
+
   getAimGuide() {
     const state = this.state
+    const revision = this.guideRevision
     const key = JSON.stringify([
-      state.mode, state.breakShot, this.angle, this.power, this.spin.x, this.spin.y,
+      revision, state.mode, state.breakShot, this.angle, this.power, this.spin.x, this.spin.y,
       this.guideMode,
       state.balls.map((b) => [b.n, b.on, b.x, b.y, b.vx, b.vy, b.wx, b.wy, b.wz, b.m, b.mu]),
     ])
     if (this.aimGuideKey !== key) {
-      const now = performance.now()
-      const adjusting = this.aiming || this.drag || this.pull || this.space
-      if (this.aimGuide && adjusting && now - this.aimGuideAt < (this.quality?.guideInterval ?? 0))
-        return this.aimGuide
+      if (this.quality?.backgroundGuide && !this.guideWorkerUnavailable && !this.guidePlanner?.failed) {
+        try {
+          this.guidePlanner ??= new GuidePlanner()
+          this.guidePlanner.request(key, {
+            geo: this.geo, balls: state.balls, angle: this.angle,
+            includeObject: this.guideMode === 'full',
+            shot: { power: this.power, spin: this.spin, breakShot: state.breakShot },
+          }, (guide, completedKey) => {
+            if (this.disposed || this.guideRevision !== revision || state.phase !== 'aim') return
+            this.aimGuide = guide
+            this.aimGuideKey = completedKey
+          })
+          return this.aimGuide
+        } catch {
+          this.guidePlanner?.dispose()
+          this.guideWorkerUnavailable = true
+        }
+      }
       this.aimGuide = buildAimGuide(this.geo, state.balls, this.angle, this.guideMode === 'full', {
         power: this.power, spin: this.spin, breakShot: state.breakShot,
       })
       this.aimGuideKey = key
-      this.aimGuideAt = now
     }
     return this.aimGuide
   }
@@ -750,7 +786,10 @@ export class BilliardsEngine {
     const cw = this.container.clientWidth
     const ch = this.container.clientHeight
     if (!cw || !ch) return
-    this.renderer.setPixelRatio(this.quality?.pixelRatio ?? Math.min(2, window.devicePixelRatio || 1))
+    if (cw === this.canvasWidth && ch === this.canvasHeight) return
+    this.canvasWidth = cw
+    this.canvasHeight = ch
+    this.renderer.setPixelRatio(this.quality.pixelRatio)
     this.renderer.setSize(cw, ch, false)
     for (const line of [this.lineA, this.lineB, this.lineC, this.bankCueLine, this.bankObjectLine])
       line.material.resolution.set(cw, ch)
@@ -1276,6 +1315,7 @@ export class BilliardsEngine {
 
   dispose() {
     this.disposed = true
+    this.guidePlanner?.dispose()
     window.removeEventListener('resize', this.resizeBound)
     window.removeEventListener('blur', this.onBlur)
     document.removeEventListener('keyup', this.onKeyUp)

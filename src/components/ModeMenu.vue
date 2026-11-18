@@ -72,6 +72,8 @@ const opponentReady = computed(
     props.ui.online.rematch?.[1 - props.ui.online.seat],
 );
 const rematchText = computed(() => {
+  if (props.ui.online.players[1 - props.ui.online.seat]?.connected === false)
+    return "下一局由电脑接管离线玩家的回合。";
   if (meReady.value) return "已准备，等待对手…";
   if (opponentReady.value) return "对手已经准备好，就等你了。";
   return "双方都点击「下一局」后，进入下一局。";
@@ -153,6 +155,13 @@ function openOnlineFromLobby() {
         </header>
 
         <template v-if="showModes">
+          <button
+            v-if="ui.online.resumeCode && ['idle', 'connecting'].includes(ui.online.status)"
+            class="front-text-button"
+            @click="actions.resumeRoom"
+          >
+            继续房间 {{ ui.online.resumeCode }} <span class="front-arrow" aria-hidden="true"></span>
+          </button>
           <template v-if="tab === 'local'">
             <div class="play-options" role="group" aria-label="选择玩法">
               <button

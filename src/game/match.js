@@ -1,4 +1,4 @@
-import { MAX_SIM_STEPS, MODES, clamp } from './constants.js'
+import { DT, MAX_SIM_STEPS, MODES, clamp } from './constants.js'
 import { colorSpot, cueSpot, getGeometry } from './geometry.js'
 import { canPlaceCue, frozenCushions, placeCue, moving, step } from './physics.js'
 import { acceptLineBallInHand, endShot, playerLabel, resolveSnookerChoice } from './rules.js'
@@ -376,10 +376,14 @@ export function launchShot(state, shot) {
   return state
 }
 
-export function simulateShot(state, shot) {
+export function simulateShot(state, shot, timing) {
   launchShot(state, shot)
   let guard = 0
-  while (moving(state.balls) && guard++ < MAX_SIM_STEPS) step(state)
+  while (guard < MAX_SIM_STEPS && moving(state.balls)) {
+    step(state)
+    guard++
+  }
+  if (timing) timing.elapsedMs = guard * DT * 1000
   state.shotAnchor = null
   state.phase = 'aim'
   endShot(state)

@@ -1227,6 +1227,15 @@ h1 {
   }
 }
 
+@media (pointer: coarse) {
+  #hud,
+  #view-tools button,
+  #pbar {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 @media (max-width: 760px) {
   #hud {
     gap: 6px;

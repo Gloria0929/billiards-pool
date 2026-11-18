@@ -59,12 +59,12 @@ export class NetClient {
         if (message && typeof message.type === 'string')
           this.emit(message.type, message)
       })
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', (event) => {
         clearTimeout(timer)
         if (this.ws !== socket) return reject(new Error('closed'))
         this.ws = null
         reject(new Error('network'))
-        this.emit('disconnect')
+        this.emit('disconnect', event)
       })
       socket.addEventListener('error', () => {
         clearTimeout(timer)

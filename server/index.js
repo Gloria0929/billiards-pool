@@ -1,8 +1,10 @@
 import { createServer } from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Worker } from 'node:worker_threads'
 import { WebSocketServer } from 'ws'
 import { createMatch, offerStalemate, publicState, resolveBreakChoice, resolveFrameChoice, simulateShot } from '../src/game/match.js'
 import {
@@ -24,6 +26,7 @@ const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const DIST = join(ROOT, 'dist')
 const MAX_ROOMS = 500
 const MAX_MESSAGE_BYTES = 8 * 1024
+const EMPTY_ROOM_TIMEOUT = 30 * 60 * 1000
 
 const rooms = new Map()
 const sockets = new Set()
@@ -106,12 +109,14 @@ function send(ws, message) {
   if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(message))
 }
 
-function roomPayload(room, seat) {
+function roomPayload(room, seat, resume = false) {
   return {
     type: 'room',
     code: room.code,
     mode: room.mode,
     seat,
+    token: room.tokens[seat],
+    ...(resume ? { state: publicState(room.state) } : {}),
     hostSeat: 0,
     started: room.started,
     guide: room.guide,
@@ -120,7 +125,7 @@ function roomPayload(room, seat) {
     players: room.names.map((name, index) => ({
       seat: index,
       name: name || null,
-      connected: !!room.clients[index],
+      connected: room.clients[index]?.readyState === 1,
     })),
     rematch: [...room.rematch],
   }
@@ -203,7 +208,7 @@ function recordMatchResult(room) {
   return changed
 }
 
-function leaveRoom(ws, notify = true) {
+function leaveRoom(ws) {
   cancelPending(ws)
   const room = ws.room
   if (!room) return
@@ -211,6 +216,17 @@ function leaveRoom(ws, notify = true) {
   if (room.clients[seat] === ws) room.clients[seat] = null
   ws.room = null
   ws.seat = null
+  if (room.started) {
+    broadcastRoom(room)
+    if (!room.clients.some(Boolean)) {
+      cancelComputer(room)
+      room.expiry = setTimeout(() => rooms.delete(room.code), EMPTY_ROOM_TIMEOUT).unref()
+    } else {
+      if (room.rematch.some(Boolean)) advanceRoom(room)
+      scheduleComputer(room)
+    }
+    return
+  }
   if (seat === 0) {
     // 房主离开即关闭房间，避免留下无法审批的公开房。
     const other = room.clients[1]
@@ -226,11 +242,81 @@ function leaveRoom(ws, notify = true) {
     return
   }
   const other = room.clients[0]
-  if (notify && !room.match.over) {
+  if (!room.match.over) {
     if (other) send(other, { type: 'peer', event: 'left' })
     broadcastRoom(room)
   }
   if (!room.clients[0] && !room.clients[1]) rooms.delete(room.code)
+}
+
+function actingSeat(state) {
+  if (state?.phase === 'aim') return state.turn
+  if (state?.phase === 'choice') return (state.breakChoice || state.sn?.choice)?.seat
+}
+
+function cancelComputer(room) {
+  clearTimeout(room.computer?.timer)
+  room.computer?.worker?.terminate()
+  room.computer = null
+}
+
+function scheduleComputer(room) {
+  const state = room.state
+  const seat = actingSeat(state)
+  if (seat == null || room.clients[seat] || !room.clients.some(Boolean)) {
+    cancelComputer(room)
+    return
+  }
+  if (room.computer?.state === state) return
+  cancelComputer(room)
+  const job = { state }
+  room.computer = job
+  const stillAway = () => room.computer === job && room.state === state &&
+    !room.clients[seat] && room.clients.some(Boolean)
+  job.timer = setTimeout(() => {
+    if (!stillAway()) return
+    if (state.phase === 'choice') {
+      room.computer = null
+      const breakChoice = state.breakChoice
+      if (breakChoice) {
+        const decision = breakChoice.kind === 'no-contact' ? 'rerack' : 'accept'
+        settleBreakChoice(room, decision, seat)
+      } else {
+        const choice = state.sn.choice
+        const seqColor = state.sn.onRed || state.sn.finalColor ? null : 16 + state.sn.idx
+        const freeBall = choice.freeBall
+          ? [21, 20, 19, 18, 17, 16].find((n) => n !== seqColor &&
+              state.balls.some((ball) => ball.on && ball.n === n))
+          : null
+        settleFrameChoice(room, 'play', freeBall)
+      }
+      scheduleComputer(room)
+      return
+    }
+    job.worker = new Worker(new URL('./computer-shot.js', import.meta.url), {
+      workerData: { state, seat },
+    })
+    job.worker.once('message', (shot) => {
+      if (!stillAway()) return
+      cancelComputer(room)
+      settleShot(room, seat, sanitizeShot(shot), true)
+      scheduleComputer(room)
+    })
+    job.worker.once('error', (error) => {
+      if (!stillAway()) return
+      console.error('computer shot failed', error)
+      cancelComputer(room)
+      // 使用球杆朝向球堆的普通击球，保证后台计算异常时仍能继续。
+      const [cue, ...balls] = state.balls
+      const target = balls.find((ball) => ball.on)
+      if (!target) return
+      settleShot(room, seat, sanitizeShot({
+        angle: Math.atan2(target.y - cue.y, target.x - cue.x),
+        power: state.breakShot ? 1 : 0.45,
+      }), true)
+      scheduleComputer(room)
+    })
+  }, Math.max(1000, (room.nextComputerAt || 0) - Date.now()))
 }
 
 function newMatch(room) {
@@ -245,15 +331,25 @@ function newMatch(room) {
     room.state.message = `${room.state.names?.[1] || '玩家2'} 开球 · 拖动白球摆位，轻点台面瞄准`
   }
   room.started = true
+  room.nextComputerAt = 0
   room.rematch = [false, false]
   room.match.recorded = false
   return publicState(room.state)
+}
+
+function advanceRoom(room) {
+  if (!room.rematch.every((ready, seat) => ready || !room.clients[seat]) || !advanceSeries(room.match))
+    return
+  const state = newMatch(room)
+  broadcastRoom(room)
+  broadcast(room, { type: 'start', state, guide: room.guide, match: publicSeries(room.match) })
 }
 
 function seatGuest(ws, room, name) {
   const seat = room.clients[0] ? 1 : 0
   room.clients[seat] = ws
   room.names[seat] = name
+  room.tokens[seat] = randomUUID()
   ws.room = room
   ws.seat = seat
   broadcastRoom(room)
@@ -322,6 +418,54 @@ function sanitizeAim(raw, geo) {
   }
 }
 
+function settleShot(room, seat, shot, computer = false) {
+  if (computer && room.state.inHand && shot.cue && !canPlaceCue(room.state, shot.cue.x, shot.cue.y))
+    shot.cue = null
+  const working = structuredClone(room.state)
+  working.geo = room.state.geo
+  const timing = {}
+  simulateShot(working, shot, timing)
+  room.state = working
+  room.nextComputerAt = Date.now() + timing.elapsedMs + 650
+  if (working.mode === 'pool') room.match.breakMisses = [...working.breakMisses]
+  recordMatchResult(room)
+  broadcast(room, {
+    type: 'shot',
+    seat,
+    shot,
+    computer,
+    state: publicState(working),
+    match: publicSeries(room.match),
+  })
+}
+
+function settleBreakChoice(room, decision, breakerSeat) {
+  const working = structuredClone(room.state)
+  working.geo = room.state.geo
+  resolveBreakChoice(working, decision, breakerSeat)
+  room.state = working
+  room.match.breakMisses = [...working.breakMisses]
+  broadcast(room, {
+    type: decision === 'rerack' ? 'start' : 'state',
+    state: publicState(working),
+    guide: room.guide,
+    match: publicSeries(room.match),
+  })
+  recordMatchResult(room)
+}
+
+function settleFrameChoice(room, decision, freeBall) {
+  const working = structuredClone(room.state)
+  working.geo = room.state.geo
+  room.state = resolveFrameChoice(working, decision, freeBall)
+  recordMatchResult(room)
+  broadcast(room, {
+    type: 'state',
+    state: publicState(room.state),
+    match: publicSeries(room.match),
+  })
+}
+
 function handleMessage(ws, message) {
   const type = message?.type
   if (type === 'ping') {
@@ -355,6 +499,7 @@ function handleMessage(ws, message) {
       bestOf,
       names: [cleanName(message.name), null],
       clients: [ws, null],
+      tokens: [randomUUID(), null],
       state: null,
       started: false,
       guide: message.guide !== false,
@@ -366,6 +511,33 @@ function handleMessage(ws, message) {
     ws.room = room
     ws.seat = 0
     send(ws, roomPayload(room, 0))
+    return
+  }
+
+  if (type === 'resume') {
+    const room = rooms.get(message.code)
+    const seat = typeof message.token === 'string' ? room?.tokens.indexOf(message.token) ?? -1 : -1
+    if (!room?.started || seat < 0) {
+      send(ws, { type: 'resume-denied', code: message.code, message: '房间已失效，或此浏览器没有保留座位。' })
+      return
+    }
+    if (ws.room !== room || ws.seat !== seat) {
+      leaveRoom(ws)
+      const previous = room.clients[seat]
+      if (previous) {
+        previous.room = null
+        previous.seat = null
+        previous.close(4001)
+      }
+      room.clients[seat] = ws
+      ws.room = room
+      ws.seat = seat
+    }
+    clearTimeout(room.expiry)
+    room.expiry = null
+    send(ws, roomPayload(room, seat, true))
+    send(room.clients[1 - seat], roomPayload(room, 1 - seat))
+    scheduleComputer(room)
     return
   }
 
@@ -523,20 +695,7 @@ function handleMessage(ws, message) {
       send(ws, { type: 'state', state: publicState(room.state) })
       return
     }
-    const working = structuredClone(room.state)
-    working.geo = room.state.geo
-    simulateShot(working, shot)
-    room.state = working
-    if (working.mode === 'pool')
-      room.match.breakMisses = [...working.breakMisses]
-    recordMatchResult(room)
-    broadcast(room, {
-      type: 'shot',
-      seat: ws.seat,
-      shot,
-      state: publicState(working),
-      match: publicSeries(room.match),
-    })
+    settleShot(room, ws.seat, shot)
     return
   }
 
@@ -567,26 +726,7 @@ function handleMessage(ws, message) {
         return
       }
     }
-    const working = structuredClone(room.state)
-    working.geo = room.state.geo
-    resolveBreakChoice(working, decision, breakerSeat)
-    room.state = working
-    room.match.breakMisses = [...working.breakMisses]
-    if (decision === 'rerack') {
-      broadcast(room, {
-        type: 'start',
-        state: publicState(working),
-        guide: room.guide,
-        match: publicSeries(room.match),
-      })
-    } else {
-      broadcast(room, {
-        type: 'state',
-        state: publicState(working),
-        match: publicSeries(room.match),
-      })
-    }
-    recordMatchResult(room)
+    settleBreakChoice(room, decision, breakerSeat)
     return
   }
 
@@ -630,15 +770,7 @@ function handleMessage(ws, message) {
         return
       }
     }
-    const working = structuredClone(room.state)
-    working.geo = room.state.geo
-    room.state = resolveFrameChoice(working, decision, freeBall)
-    recordMatchResult(room)
-    broadcast(room, {
-      type: 'state',
-      state: publicState(room.state),
-      match: publicSeries(room.match),
-    })
+    settleFrameChoice(room, decision, freeBall)
     return
   }
 
@@ -694,16 +826,7 @@ function handleMessage(ws, message) {
     }
     room.rematch[ws.seat] = true
     broadcastRoom(room)
-    if (room.rematch[0] && room.rematch[1] && advanceSeries(room.match)) {
-      const state = newMatch(room)
-      broadcastRoom(room)
-      broadcast(room, {
-        type: 'start',
-        state,
-        guide: room.guide,
-        match: publicSeries(room.match),
-      })
-    }
+    advanceRoom(room)
     return
   }
 
@@ -734,6 +857,8 @@ wss.on('connection', (ws) => {
     } catch (error) {
       console.error('message failed', error)
       send(ws, { type: 'error', message: '服务器处理失败，请重试。' })
+    } finally {
+      if (ws.room?.started) scheduleComputer(ws.room)
     }
   })
   ws.on('close', () => {
@@ -757,7 +882,7 @@ setInterval(() => {
 }, 30000).unref()
 
 server.listen(PORT, () => {
-  console.log(`台球联机服务已启动: http://localhost:${PORT}  (WebSocket /ws)`)
+  console.log(`台球联机服务已启动: http://localhost:${server.address().port}  (WebSocket /ws)`)
 })
 
 export { server, wss, rooms }

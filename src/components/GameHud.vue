@@ -39,12 +39,14 @@ const turnNote = computed(() => {
       : "电脑正在瞄准…";
   }
   if (online.status !== "playing") return "";
-  if (online.opponentLeft) return "对手已离开";
   if (online.waiting) return "正在同步击球…";
-  if (online.seat === turn) return "";
-
   const opponent = 1 - online.seat;
   const name = names?.[opponent] || online.players?.[opponent]?.name || "对手";
+  if (online.players[opponent]?.connected === false) {
+    if (turn === opponent && phase === "aim") return `电脑正在替 ${name} 击球…`;
+    return `${name} 已离线 · 电脑接管其回合`;
+  }
+  if (online.seat === turn) return "";
   return `正在观看 ${name} 瞄准… · ${shotNote}`;
 });
 
@@ -202,7 +204,7 @@ onBeforeUnmount(() =>
         }}
       </p>
       <p>辅助线：{{ ui.online.guide ? "开" : "关" }}</p>
-      <button @click="leaveRoom">离开房间</button>
+      <button @click="leaveRoom">{{ ui.online.status === "playing" ? "暂离房间" : "离开房间" }}</button>
     </div>
   </header>
 </template>
