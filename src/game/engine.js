@@ -1,4 +1,7 @@
 import * as THREE from 'three'
+import { Line2 } from 'three/examples/jsm/lines/Line2.js'
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { AIM_NUDGE, AIM_NUDGE_FINE, COL, DT, MAX_SIM_STEPS, SC, clamp } from './constants.js'
 import { getGeometry, toWorldX, toWorldZ } from './geometry.js'
 import { canPlaceCue, moving, step } from './physics.js'
@@ -181,20 +184,21 @@ export class BilliardsEngine {
     this.tableStage.add(this.tableShadow)
 
     this.aimGroup = new THREE.Group()
-    const aimMaterial = (c) =>
-      new THREE.MeshBasicMaterial({
-        color: surfaceColor(c),
-        transparent: true,
-        opacity: 0.91, toneMapped: false,
+    const guideLine = (color, dashed = false) => {
+      const material = new LineMaterial({
+        color: surfaceColor(color), transparent: true, opacity: 0.91, toneMapped: false,
+        linewidth: dashed ? 1.5 : 1.8, dashSize: 22, gapSize: 14,
       })
-    const cyl = (c) => {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(3.35, 3.35, 1, 8), aimMaterial(c))
+      if (dashed) material.defines.USE_DASH = ''
+      const m = new Line2(new LineGeometry(), material)
+      m.visible = false
+      m.frustumCulled = false
       this.aimGroup.add(m)
       return m
     }
-    this.lineA = cyl(0xffffff)
-    this.lineB = cyl(0xffe38a)
-    this.lineC = cyl(0xffffff)
+    this.lineA = guideLine(0xffffff)
+    this.lineB = guideLine(0xffe38a)
+    this.lineC = guideLine(0xffffff)
     this.ghost = new THREE.Mesh(
       new THREE.SphereGeometry(1, 16, 12),
       new THREE.MeshBasicMaterial({
@@ -205,27 +209,8 @@ export class BilliardsEngine {
     )
     this.aimGroup.add(this.ghost)
 
-    const dashedLine = (color) => {
-      const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(),
-          new THREE.Vector3(),
-        ]),
-        new THREE.LineDashedMaterial({
-          color: surfaceColor(color),
-          dashSize: 22,
-          gapSize: 14,
-          transparent: true,
-          opacity: 0.9, toneMapped: false,
-        }),
-      )
-      line.visible = false
-      line.frustumCulled = false
-      this.aimGroup.add(line)
-      return line
-    }
-    this.bankCueLine = dashedLine(0x8fd6ff)
-    this.bankObjectLine = dashedLine(0xffd479)
+    this.bankCueLine = guideLine(0x8fd6ff, true)
+    this.bankObjectLine = guideLine(0xffd479, true)
 
     const pocketRing = new THREE.RingGeometry(0.72, 1, 36)
     const pocketMark = (color) => {
@@ -692,39 +677,20 @@ export class BilliardsEngine {
       const dy = Math.sin(this.angle)
       const P = (x, y) => V3(tx(x), R, tz(y))
       if (this.aimGroup.visible) {
-        const guide = buildAimGuide(
-          geo,
-          state.balls,
-          this.angle,
-          this.guideMode === 'full',
-        )
-        const gx = guide.ghost.x
-        const gy = guide.ghost.y
-        const g = P(gx, gy)
-        this.segment(this.lineA, P(cue.x, cue.y), g)
-        this.ghost.position.copy(g)
-        this.ghost.scale.setScalar(R)
-        if (guide.object) {
-          this.segment(
-            this.lineB,
-            P(guide.object.from.x, guide.object.from.y),
-            P(guide.object.to.x, guide.object.to.y),
-          )
-        } else this.lineB.visible = false
-        if (guide.deflect) {
-          this.segment(
-            this.lineC,
-            g,
-            P(gx + guide.deflect.x * 220, gy + guide.deflect.y * 220),
-          )
-        } else this.lineC.visible = false
-        this.setGuideLine(this.bankCueLine, guide.cueBank)
-        this.setGuideLine(this.bankObjectLine, guide.objectBank)
-        this.setPocketMark(this.cuePocketMark, guide.cueBank)
-        this.setPocketMark(
-          this.objectPocketMark,
-          guide.objectPocket ? { pocket: guide.objectPocket } : guide.objectBank,
-        )
+        const guide = this.getAimGuide()
+        if (guide !== this.renderedGuide) {
+          this.setGuideLine(this.lineA, guide.cuePath)
+          this.setGuideLine(this.lineB, guide.object)
+          this.setGuideLine(this.lineC, guide.deflect)
+          this.ghost.visible = !!guide.hitBall
+          this.ghost.position.copy(P(guide.ghost.x, guide.ghost.y))
+          this.ghost.scale.setScalar(R)
+          this.setGuideLine(this.bankCueLine, guide.cueBank)
+          this.setGuideLine(this.bankObjectLine, guide.objectBank)
+          this.setPocketMark(this.cuePocketMark, { pocket: guide.cuePocket })
+          this.setPocketMark(this.objectPocketMark, { pocket: guide.objectPocket })
+          this.renderedGuide = guide
+        }
       }
       const strike = this.strikeProgress
       const gap = 3 + (11 + this.power * 260) * (1 - strike * strike)
@@ -750,31 +716,30 @@ export class BilliardsEngine {
     this.renderer.render(this.scene, this.cam)
   }
 
-  segment(mesh, a, b) {
-    const d = b.clone().sub(a)
-    const length = d.length()
-    mesh.visible = length > 1
-    mesh.position.copy(a).add(b).multiplyScalar(0.5)
-    mesh.scale.set(1, length || 1, 1)
-    if (length > 1) mesh.quaternion.setFromUnitVectors(Y_AXIS, d.normalize())
+  getAimGuide() {
+    const state = this.state
+    const key = JSON.stringify([
+      state.mode, state.breakShot, this.angle, this.power, this.spin.x, this.spin.y,
+      this.guideMode,
+      state.balls.map((b) => [b.n, b.on, b.x, b.y, b.vx, b.vy, b.wx, b.wy, b.wz, b.m, b.mu]),
+    ])
+    if (this.aimGuideKey !== key) {
+      this.aimGuide = buildAimGuide(this.geo, state.balls, this.angle, this.guideMode === 'full', {
+        power: this.power, spin: this.spin, breakShot: state.breakShot,
+      })
+      this.aimGuideKey = key
+    }
+    return this.aimGuide
   }
 
-  setGuideLine(line, bank) {
-    if (!bank) {
-      line.visible = false
-      return
-    }
-    const y = this.geo.R + 0.6
-    line.geometry.setFromPoints([
-      V3(
-        toWorldX(this.geo, bank.from.x),
-        y,
-        toWorldZ(this.geo, bank.from.y),
-      ),
-      V3(toWorldX(this.geo, bank.to.x), y, toWorldZ(this.geo, bank.to.y)),
-    ])
+  setGuideLine(line, route) {
+    line.visible = !!route && route.points.length > 1
+    if (!line.visible) return
+    const points = route.points.flatMap((p) =>
+      [toWorldX(this.geo, p.x), this.geo.R, toWorldZ(this.geo, p.y)])
+    line.geometry.dispose()
+    line.geometry = new LineGeometry().setPositions(points)
     line.computeLineDistances()
-    line.visible = true
   }
 
   setPocketMark(mark, bank) {
@@ -810,6 +775,8 @@ export class BilliardsEngine {
     if (!cw || !ch) return
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
     this.renderer.setSize(cw, ch, false)
+    for (const line of [this.lineA, this.lineB, this.lineC, this.bankCueLine, this.bankObjectLine])
+      line.material.resolution.set(cw, ch)
     this.cam.aspect = cw / ch
     this.cam.updateProjectionMatrix()
   }
@@ -1338,6 +1305,7 @@ export class BilliardsEngine {
     if (this.tg) this.disposeGroup(this.tg)
     if (this.sg) this.sg.dispose()
     if (this.tableStage) this.disposeGroup(this.tableStage)
+    if (this.aimGroup) this.disposeGroup(this.aimGroup)
     if (this.cueContactMark) this.disposeGroup(this.cueContactMark)
     this.tableMapTextures?.forEach((map) => map.dispose())
     this.sun?.shadow.dispose()
