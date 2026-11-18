@@ -9,6 +9,7 @@ import { buildAimGuide } from './guide.js'
 import { launchShot } from './match.js'
 import { createTable, createTableEnvironment, tableMargins, TABLE_FLOOR } from './table.js'
 import { createRoomShell, loadTableMaps, surfaceColor } from './table-materials.js'
+import { createCue } from './cue.js'
 import * as audio from './audio.js'
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
@@ -234,21 +235,7 @@ export class BilliardsEngine {
 
     this.scene.add(this.aimGroup)
 
-    this.cueGroup = new THREE.Group()
-    const cueMaterial = (c, s) =>
-      new THREE.MeshPhongMaterial({ color: surfaceColor(c), shininess: s || 10 })
-    this.cueShaft = new THREE.Mesh(
-      new THREE.CylinderGeometry(5, 9, 900, 10),
-      cueMaterial(0xe0bd82, 40),
-    )
-    this.cueButt = new THREE.Mesh(
-      new THREE.CylinderGeometry(9, 15, 800, 10),
-      cueMaterial(0x1c120a, 40),
-    )
-    this.cueShaft.position.y = -450
-    this.cueButt.position.y = -1300
-    this.cueShaft.castShadow = this.cueButt.castShadow = false
-    this.cueGroup.add(this.cueShaft, this.cueButt)
+    this.cueGroup = createCue()
     this.scene.add(this.cueGroup)
 
     this.spinQuat = new THREE.Quaternion()
@@ -1291,6 +1278,7 @@ export class BilliardsEngine {
     if (this.sg) this.sg.dispose()
     if (this.tableStage) this.disposeGroup(this.tableStage)
     if (this.aimGroup) this.disposeGroup(this.aimGroup)
+    if (this.cueGroup) this.disposeGroup(this.cueGroup)
     this.tableMapTextures?.forEach((map) => map.dispose())
     this.sun?.shadow.dispose()
     this.tableEnvironment?.dispose()

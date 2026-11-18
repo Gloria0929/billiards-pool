@@ -75,16 +75,26 @@ export function bounce(state, b, nx, ny, counts = true) {
   const q = -ny
   const r = nx
   const s = 0.27
-  const c = 0.963
+  const c = Math.sqrt(1 - s * s)
   const ut =
     b.vx * q + b.vy * r - R * (s * (b.wx * nx + b.wy * ny) + c * b.wz)
-  const P = Math.min(0.2 * J, Math.abs(ut) / 3.5) * (ut > 0 ? -1 : 1)
-  const k = (2.5 / R) * P
-  b.vx += P * q
-  b.vy += P * r
-  b.wx -= k * s * nx
-  b.wy -= k * s * ny
-  b.wz -= k * c
+  // The cushion has two slip directions. Omitting the vertical one leaves all
+  // incoming topspin intact, which then brakes the rebounding ball on the cloth.
+  // Use one Coulomb-friction budget for both directions at the raised contact.
+  // Slip directions: Mathavan et al. (2010), section 2.3.
+  const uv = s * (b.vx * nx + b.vy * ny) + R * (-b.wx * ny + b.wy * nx)
+  const sideImpulse = -ut / 3.5
+  const verticalImpulse = -uv / (2.5 + s * s)
+  const impulse = Math.hypot(sideImpulse, verticalImpulse)
+  const scale = impulse > 0 ? Math.min(1, 0.2 * J / impulse) : 0
+  const sideFriction = sideImpulse * scale
+  const verticalFriction = verticalImpulse * scale
+  const k = 2.5 / R
+  b.vx += sideFriction * q + verticalFriction * s * nx
+  b.vy += sideFriction * r + verticalFriction * s * ny
+  b.wx -= k * (sideFriction * s * nx + verticalFriction * ny)
+  b.wy += k * (-sideFriction * s * ny + verticalFriction * nx)
+  b.wz -= k * sideFriction * c
   pushEvent(state, 'r', -vn, b.x, b.y, b.n)
   // 规则判定用的碰库记录：events 每帧会被音效消费清空，这里单独保留。
   if (counts && state.firstHit !== null) state.railAfterContact = true
