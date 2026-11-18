@@ -1,7 +1,7 @@
 import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { BilliardsEngine } from '../game/engine.js'
 import { createMatch, hydrateState, offerStalemate, resolveBreakChoice as applyBreakChoice, resolveFrameChoice, snapshot } from '../game/match.js'
-import { concedeFrame, endShot, snookerPointsRemaining } from '../game/rules.js'
+import { canConcedeFrame, endShot, offerConcession, snookerPointsRemaining } from '../game/rules.js'
 import { MODES } from '../game/constants.js'
 import {
   advanceSeries,
@@ -223,13 +223,9 @@ export function useBilliards() {
       (onlinePlaying || state.quietShots >= 6)
     const playerSeat = onlinePlaying ? ui.online.seat : 0
     ui.canConcede =
-      state.mode === 'snk' &&
-      state.phase === 'aim' &&
-      playerSeat != null &&
-      state.turn === playerSeat &&
+      canConcedeFrame(state, playerSeat) &&
       !ui.online.waiting &&
-      state.sn.score[playerSeat] + snookerPointsRemaining(state) <
-        state.sn.score[1 - playerSeat]
+      !engine?.striking
     engine?.setInteraction(ui.canShoot)
   }
 
@@ -604,7 +600,7 @@ export function useBilliards() {
     showMenu(
       'concede',
       '确认认输？',
-      '台面剩余分数已经不足以追平。',
+      '已有一方需要靠罚分追分。提出认输后，由对手决定是否接受。',
     )
   }
 
@@ -624,10 +620,11 @@ export function useBilliards() {
       syncUi()
       return
     }
-    concedeFrame(state, 0)
+    offerConcession(state, 0)
     closeMenu()
+    engine?.applyState(state)
     syncUi()
-    openOverlayForResult()
+    scheduleAiFoulChoice()
   }
 
   /* ---------- 音效 / 辅助线 ---------- */

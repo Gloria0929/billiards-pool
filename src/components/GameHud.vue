@@ -1,95 +1,101 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import PlayerCard from './PlayerCard.vue'
-import BallChip from './BallChip.vue'
-import SettingsPanel from './SettingsPanel.vue'
-import { formatLabel } from '../game/series.js'
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import PlayerCard from "./PlayerCard.vue";
+import BallChip from "./BallChip.vue";
+import SettingsPanel from "./SettingsPanel.vue";
+import { formatLabel } from "../game/series.js";
 
 const props = defineProps({
   ui: { type: Object, required: true },
   actions: { type: Object, required: true },
-})
+});
 
-const onlineOpen = ref(false)
-const popEl = ref(null)
-const triggerEl = ref(null)
+const onlineOpen = ref(false);
+const popEl = ref(null);
+const triggerEl = ref(null);
 
 const onlineActive = computed(
-  () => props.ui.online.status === 'room' || props.ui.online.status === 'playing',
-)
+  () =>
+    props.ui.online.status === "room" || props.ui.online.status === "playing",
+);
 const watching = computed(
   () =>
-    props.ui.online.status === 'playing' &&
+    props.ui.online.status === "playing" &&
     props.ui.online.seat != null &&
     props.ui.online.seat !== props.ui.turn,
-)
+);
 
 const turnNote = computed(() => {
-  const { online, turn, phase, names, spin, power } = props.ui
-  const spinLabels = []
-  if (Math.abs(spin.y) > 0.02) spinLabels.push(spin.y > 0 ? '高杆' : '低杆')
-  if (Math.abs(spin.x) > 0.02) spinLabels.push(spin.x > 0 ? '右塞' : '左塞')
-  const detail = spinLabels.length ? ' ' + spinLabels.join('') : ''
-  const shotNote = `力度 ${Math.round(power * 100)}%${detail}`
-  if (online.status === 'idle') {
-    if (turn !== 1 || phase !== 'aim' || !names) return ''
-    return props.ui.aiShotReady ? `电脑正在瞄准… · ${shotNote}` : '电脑正在瞄准…'
+  const { online, turn, phase, names, spin, power } = props.ui;
+  const spinLabels = [];
+  if (Math.abs(spin.y) > 0.02) spinLabels.push(spin.y > 0 ? "高杆" : "低杆");
+  if (Math.abs(spin.x) > 0.02) spinLabels.push(spin.x > 0 ? "右塞" : "左塞");
+  const detail = spinLabels.length ? " " + spinLabels.join("") : "";
+  const shotNote = `力度 ${Math.round(power * 100)}%${detail}`;
+  if (online.status === "idle") {
+    if (turn !== 1 || phase !== "aim" || !names) return "";
+    return props.ui.aiShotReady
+      ? `电脑正在瞄准… · ${shotNote}`
+      : "电脑正在瞄准…";
   }
-  if (online.status !== 'playing') return ''
-  if (online.opponentLeft) return '对手已离开'
-  if (online.waiting) return '正在同步击球…'
-  if (online.seat === turn) return ''
+  if (online.status !== "playing") return "";
+  if (online.opponentLeft) return "对手已离开";
+  if (online.waiting) return "正在同步击球…";
+  if (online.seat === turn) return "";
 
-  const opponent = 1 - online.seat
-  const name = names?.[opponent] || online.players?.[opponent]?.name || '对手'
-  return `正在观看 ${name} 瞄准… · ${shotNote}`
-})
+  const opponent = 1 - online.seat;
+  const name = names?.[opponent] || online.players?.[opponent]?.name || "对手";
+  return `正在观看 ${name} 瞄准… · ${shotNote}`;
+});
 
 const views = [
-  { id: 'top', label: '俯视' },
-  { id: 'orbit', label: '3D 全景' },
-  { id: 'fp', label: '贴杆瞄准' },
-]
+  { id: "top", label: "俯视" },
+  { id: "orbit", label: "3D 全景" },
+  { id: "fp", label: "贴杆瞄准" },
+];
 
 function displayName(seat) {
   return (
     props.ui.names?.[seat] ||
     props.ui.online.players?.[seat]?.name ||
     `玩家${seat + 1}`
-  )
+  );
 }
 
 function tagFor(seat) {
-  if (onlineActive.value)
-    return seat === props.ui.online.seat ? '你' : '对手'
-  if (seat === 1 && props.ui.names) return 'AI'
-  return ''
+  if (onlineActive.value) return seat === props.ui.online.seat ? "你" : "对手";
+  if (seat === 1 && props.ui.names) return "AI";
+  return "";
 }
 
 function toggleOnline() {
-  props.actions.closeSettings()
-  onlineOpen.value = !onlineOpen.value
+  props.actions.closeSettings();
+  onlineOpen.value = !onlineOpen.value;
 }
 
 function toggleSettings() {
-  onlineOpen.value = false
-  props.actions.toggleSettings()
+  onlineOpen.value = false;
+  props.actions.toggleSettings();
 }
 
 function leaveRoom() {
-  onlineOpen.value = false
-  props.actions.leaveRoom()
+  onlineOpen.value = false;
+  props.actions.leaveRoom();
 }
 
 function onDocumentPointerDown(event) {
-  if (!onlineOpen.value) return
-  if (popEl.value?.contains(event.target)) return
-  if (triggerEl.value?.contains(event.target)) return
-  onlineOpen.value = false
+  if (!onlineOpen.value) return;
+  if (popEl.value?.contains(event.target)) return;
+  if (triggerEl.value?.contains(event.target)) return;
+  onlineOpen.value = false;
 }
 
-onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown))
-onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPointerDown))
+onMounted(() =>
+  document.addEventListener("pointerdown", onDocumentPointerDown),
+);
+onBeforeUnmount(() =>
+  document.removeEventListener("pointerdown", onDocumentPointerDown),
+);
 </script>
 
 <template>
@@ -152,7 +158,9 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
           {{ item.label }}
         </button>
       </nav>
-      <button v-if="ui.canRequestStalemate" @click="actions.requestStalemate">重摆</button>
+      <button v-if="ui.canRequestStalemate" @click="actions.requestStalemate">
+        重摆
+      </button>
       <button
         v-if="ui.mode === 'snk' && ui.phase !== 'over'"
         id="concede"
@@ -160,7 +168,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
         :title="
           ui.canConcede
             ? '本局认输'
-            : '轮到你击球且台面剩余分数不足以追平时才能认输'
+            : '轮到你击球且已有一方需要罚分追分时才能认输'
         "
         @click="actions.openConcedeConfirm"
       >
@@ -177,20 +185,23 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
       <button v-if="onlineActive" ref="triggerEl" @click="toggleOnline">
         联机
       </button>
-      <button v-else id="nb" @click="actions.openMenu">切换玩法</button>
+      <button v-else id="nb" @click="actions.openMenu">退出游戏</button>
       <SettingsPanel v-if="ui.settingsOpen" :ui="ui" :actions="actions" />
     </div>
-    <div id="msg" role="status" aria-live="polite">{{ turnNote || ui.message }}</div>
+    <div id="msg" role="status" aria-live="polite">
+      {{ turnNote || ui.message }}
+    </div>
     <div v-if="onlineOpen" ref="popEl" class="online-pop">
       <h4>联机房间</h4>
       <p>
         房间码 <span class="code">{{ ui.online.code }}</span>
       </p>
       <p>
-        你是{{ ui.online.seat === 0 ? '房主' : '挑战者' }} ·
-        对手：{{ displayName(1 - ui.online.seat) }}
+        你是{{ ui.online.seat === 0 ? "房主" : "挑战者" }} · 对手：{{
+          displayName(1 - ui.online.seat)
+        }}
       </p>
-      <p>辅助线：{{ ui.online.guide ? '开' : '关' }}</p>
+      <p>辅助线：{{ ui.online.guide ? "开" : "关" }}</p>
       <button @click="leaveRoom">离开房间</button>
     </div>
   </header>

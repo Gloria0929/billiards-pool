@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws'
 import { createMatch, offerStalemate, publicState, resolveBreakChoice, resolveFrameChoice, simulateShot } from '../src/game/match.js'
 import {
   offerConcession,
-  snookerPointsRemaining,
+  canConcedeFrame,
 } from '../src/game/rules.js'
 import { canPlaceCue } from '../src/game/physics.js'
 import { clamp } from '../src/game/constants.js'
@@ -665,11 +665,7 @@ function handleMessage(ws, message) {
       send(ws, { type: 'error', message: '还没轮到你击球。' })
       return
     }
-    const op = 1 - ws.seat
-    if (
-      room.state.sn.score[ws.seat] + snookerPointsRemaining(room.state) >=
-      room.state.sn.score[op]
-    ) {
+    if (!canConcedeFrame(room.state, ws.seat)) {
       send(ws, { type: 'error', message: '台面剩余分数足够，不能认输。' })
       return
     }

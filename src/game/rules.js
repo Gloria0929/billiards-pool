@@ -48,6 +48,10 @@ export function acceptLineBallInHand(state) {
 function finish(state, winner, why) {
   state.phase = 'over'
   state.winner = winner
+  if (state.mode === 'snk') {
+    state.sn.choice = null
+    state.sn.freeBall = null
+  }
   state.message =
     winner < 0
       ? `平局(${why})`
@@ -399,6 +403,12 @@ export function snookerPointsRemaining(state) {
   return pointsRemaining(state.balls, state.sn)
 }
 
+export function canConcedeFrame(state, seat) {
+  return state?.mode === 'snk' && state.phase === 'aim' &&
+    (seat === 0 || seat === 1) && state.turn === seat &&
+    Math.abs(state.sn.score[0] - state.sn.score[1]) > snookerPointsRemaining(state)
+}
+
 function canHitFullBall(state, targets) {
   const balls = state.shotStart?.balls
   if (!balls) return false
@@ -418,14 +428,15 @@ function canHitFullBall(state, targets) {
 export function concedeFrame(state, seat) {
   if (!state || state.phase === 'over') return state
   finish(state, 1 - seat, `${playerLabel(state, seat)}认输`)
-  state.sn.choice = null
   return state
 }
 
 export function offerConcession(state, seat) {
+  if (!canConcedeFrame(state, seat)) return state
   state.sn.choice = { kind: 'concede', seat: 1 - seat, offender: seat }
   state.phase = 'choice'
   state.message = `${playerLabel(state, seat)}提出认输`
+  return state
 }
 
 export function resolveSnookerChoice(state, decision, freeBall = null) {
@@ -532,7 +543,9 @@ function endSnooker(state) {
   const isBallOn = (n) => redOn ? n > 0 && n <= 15 : n === targetColor
   const ballOnValue = redOn ? 1 : colorValue(targetColor) ?? 4
   const movedTouchingBall = touching.find((ball) => firstHits.includes(ball.n) && direction(ball) > 0)
-  const playedAway = !freeBall && touching.some((ball) => isBallOn(ball.n) && direction(ball) <= 0)
+  // 指定自由球也视为球在；贴着它时合法打离即满足首碰要求。
+  const playedAway = touching.some((ball) =>
+    (freeBall ? ball.n === freeBall : isBallOn(ball.n)) && direction(ball) <= 0)
   const contactedOn = playedAway || (freeBall ? firstHits.includes(freeBall) : firstHits.some(isBallOn))
   const legalContact = playedAway || (contactedOn && firstHits.every((n) => n === freeBall || isBallOn(n)))
   let why = movedTouchingBall ? '击动了贴球'
@@ -540,7 +553,12 @@ function endSnooker(state) {
     : offTable.length ? '有球离开台面'
     : !legalContact ? firstHits.length ? '先碰了错误的球' : '未击中任何球'
     : ''
-  let foulValue = Math.max(4, ballOnValue, movedTouchingBall ? colorValue(movedTouchingBall.n) : 0)
+  const touchingValue = movedTouchingBall
+    ? movedTouchingBall.n === freeBall ? ballOnValue : colorValue(movedTouchingBall.n)
+    : 0
+  // 任意彩阶段仍以首碰识别所选彩球；尚未选定彩球就犯规罚 7 分。
+  let foulValue = Math.max(4, ballOnValue, touchingValue,
+    anyColorOn && targetColor == null ? 7 : 0)
   for (const n of offTable) foulValue = Math.max(foulValue, colorValue(n) || 0)
   if (!legalContact)
     for (const n of firstHits)
@@ -693,11 +711,10 @@ function endSnooker(state) {
     return
   }
 
-  const live = state.balls.filter((ball) => ball.on && ball.n)
+  // 保留最后黑球的一杆；分差超过 7 分时，合法未进也由领先方获胜。
   const [a, b] = state.sn.score
-  if (!state.sn.finalColor && live.length === 1 && live[0].n === 21 && Math.abs(a - b) > 7) {
-    state.sn.choice = null
-    finish(state, a > b ? 0 : 1, `只剩黑球，分差超过7分 (${a} : ${b})`)
+  if (onlyBlack && Math.abs(a - b) > 7) {
+    finish(state, a > b ? 0 : 1, `黑球阶段，分差超过7分 (${a} : ${b})`)
     return
   }
   state.message = txt + ' · 目标:' + snookerTarget(state)
