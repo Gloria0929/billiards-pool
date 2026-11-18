@@ -251,17 +251,6 @@ export class BilliardsEngine {
     this.cueGroup.add(this.cueShaft, this.cueButt)
     this.scene.add(this.cueGroup)
 
-    this.cueContactMark = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 12, 8),
-      new THREE.MeshBasicMaterial({
-        color: surfaceColor(0xe96450), toneMapped: false,
-        depthTest: false, depthWrite: false, transparent: true,
-      }),
-    )
-    this.cueContactMark.visible = false
-    this.cueContactMark.renderOrder = 2
-    this.scene.add(this.cueContactMark)
-
     this.spinQuat = new THREE.Quaternion()
     this.spinAxis = new THREE.Vector3()
     this.resize()
@@ -667,11 +656,9 @@ export class BilliardsEngine {
     const dragging = this.drag && state.phase === 'aim'
     const showCue = state.phase === 'aim' && cue.on && !dragging
     const { x: sideSpin, y: verticalSpin } = this.spin
-    const showContact = showCue && (sideSpin !== 0 || verticalSpin !== 0)
     this.aimGroup.visible =
       this.showGuide && state.phase === 'aim' && cue.on && !dragging
     this.cueGroup.visible = showCue
-    this.cueContactMark.visible = showContact
     if (showCue) {
       const dx = Math.cos(this.angle)
       const dy = Math.sin(this.angle)
@@ -697,15 +684,13 @@ export class BilliardsEngine {
       const th = this.cueTilt(cue, dx, dy)
       const axis = V3(dx * Math.cos(th), -Math.sin(th), -dy * Math.cos(th))
       const contact = P(cue.x, cue.y)
-      if (showContact) {
+      if (sideSpin !== 0 || verticalSpin !== 0) {
         const right = V3(dy, 0, dx)
         const up = right.clone().cross(axis)
         const depth = R * Math.sqrt(1 - sideSpin ** 2 - verticalSpin ** 2)
         contact.addScaledVector(right, R * sideSpin)
           .addScaledVector(up, R * verticalSpin)
           .addScaledVector(axis, -depth)
-        this.cueContactMark.position.copy(contact)
-        this.cueContactMark.scale.setScalar(R * 0.13)
       } else contact.addScaledVector(axis, -R)
       this.cueGroup.position.copy(contact).addScaledVector(axis, -gap)
       this.cueGroup.quaternion.setFromUnitVectors(Y_AXIS, axis)
@@ -1306,7 +1291,6 @@ export class BilliardsEngine {
     if (this.sg) this.sg.dispose()
     if (this.tableStage) this.disposeGroup(this.tableStage)
     if (this.aimGroup) this.disposeGroup(this.aimGroup)
-    if (this.cueContactMark) this.disposeGroup(this.cueContactMark)
     this.tableMapTextures?.forEach((map) => map.dispose())
     this.sun?.shadow.dispose()
     this.tableEnvironment?.dispose()
