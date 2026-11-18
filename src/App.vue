@@ -4,6 +4,7 @@ import GameHud from './components/GameHud.vue'
 import TableStage from './components/TableStage.vue'
 import ControlBar from './components/ControlBar.vue'
 import ModeMenu from './components/ModeMenu.vue'
+import BreakCelebration from './components/BreakCelebration.vue'
 
 const { canvasRef, ui, actions } = useBilliards()
 
@@ -17,6 +18,7 @@ const setCanvas = (el) => {
   <TableStage :ui="ui" :actions="actions" :set-canvas="setCanvas" />
   <ControlBar :ui="ui" :actions="actions" />
   <ModeMenu :ui="ui" :actions="actions" />
+  <BreakCelebration :ui="ui" />
   <div id="load-error" v-if="ui.webglError">
     <h2>球桌暂时无法显示</h2>
     <p>请使用支持 WebGL 的浏览器，并开启硬件加速。</p>

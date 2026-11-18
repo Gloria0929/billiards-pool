@@ -32,6 +32,8 @@ test('完整 15 红 15 黑加清彩，单杆 147 触发彩蛋，双方及联机�
     let state = start(seat)
     redsAndBlacks(state)
     assert.equal(state.sn.breakScore, 120)
+    assert.equal(snapshot(state).breakScore, 120)
+    assert.equal(snapshot(state).breakSeat, seat)
     assert.equal(state.sn.maximumBreak, null)
     // 联机中途恢复后，单杆计分必须继续保留。
     state = hydrateState(JSON.parse(JSON.stringify(publicState(state))))

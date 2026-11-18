@@ -502,6 +502,8 @@ export function snapshot(state) {
     message: state.message,
     groups: [...state.grp],
     scores: [...state.sn.score],
+    breakScore: state.sn.breakScore ?? 0,
+    breakSeat: state.sn.breakSeat ?? null,
     maximumBreak: state.sn.maximumBreak ? { ...state.sn.maximumBreak } : null,
     centuryBreak: state.sn.centuryBreak ? { ...state.sn.centuryBreak } : null,
     onRed: state.sn.onRed,

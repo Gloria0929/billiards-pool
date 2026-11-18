@@ -42,9 +42,7 @@ const frontRoom = computed(() =>
   showModes.value || ["online", "local-over", "online-over", "online-left"].includes(props.ui.menu.kind),
 );
 const outcome = computed(() => props.ui.menu.kind.endsWith("-over"));
-const matchScore = computed(() =>
-  props.ui.match.bestOf > 1 && (props.ui.match.over || props.ui.mode !== "snk"),
-);
+const matchScore = computed(() => props.ui.mode !== "snk");
 const compactMenu = computed(() =>
   ["break-choice", "foul-choice", "free-ball"].includes(props.ui.menu.kind),
 );
@@ -97,7 +95,7 @@ const panelIntro = computed(() => {
     const message = props.ui.menu.title;
     const detail = message.match(/[（(](.+)[）)]$/)?.[1];
     if (detail && !/^\d+\s*:\s*\d+$/.test(detail)) return detail;
-    return props.ui.match.over && props.ui.match.bestOf === 1 ? "比赛结束。" : "";
+    return "";
   }
   if (!showModes.value || props.ui.menu.kind === "paused") return props.ui.menu.intro;
   if (tab.value === "lobby") return "找一间公开房，向房主申请加入。";
@@ -115,7 +113,7 @@ function openOnlineFromLobby() {
   <div
     id="ov"
     v-if="ui.menu.visible"
-    :class="{ 'front-room': frontRoom, compact: compactMenu }"
+    :class="{ 'front-room': frontRoom, compact: compactMenu, 'result-room': outcome }"
     role="dialog"
     aria-modal="true"
     aria-labelledby="ovt"
@@ -141,6 +139,7 @@ function openOnlineFromLobby() {
 
       <div class="menu-body">
         <header class="menu-heading">
+          <p v-if="outcome" class="result-eyebrow">{{ ui.modeName }} <span> / </span>{{ ui.match.over ? '比赛结束' : `第 ${ui.match.frame} 局结束` }}</p>
           <button
             v-if="ui.menu.kind === 'paused'"
             id="resume"
@@ -314,10 +313,11 @@ function openOnlineFromLobby() {
             <p>{{ ui.names?.[ui.snookerCentury.seat] || "玩家" + (ui.snookerCentury.seat + 1) }} · 单杆破百</p>
             <small>好球，破百了。</small>
           </div>
-          <div v-if="ui.mode === 'snk' || matchScore" class="result-scoreboard" :aria-label="matchScore ? '局分' : '本局得分'">
+          <div class="result-scoreboard" :aria-label="matchScore ? '局分' : '本局得分'">
             <div v-for="seat in [0, 1]" :key="seat" class="result-score" :class="{ winner: ui.winner === seat }">
-              <span>{{ ui.names?.[seat] || "玩家" + (seat + 1) }}</span>
+              <span class="result-player">{{ ui.names?.[seat] || "玩家" + (seat + 1) }}<small>{{ ui.winner === seat ? '胜方' : ui.winner < 0 ? '平局' : '负方' }}</small></span>
               <strong>{{ matchScore ? ui.match.wins[seat] : ui.scores[seat] }}</strong>
+              <span class="result-score-unit">{{ matchScore ? '赢得局数' : '本局得分' }}</span>
             </div>
           </div>
           <p v-if="ui.match.bestOf > 1" class="match-line">
@@ -327,10 +327,11 @@ function openOnlineFromLobby() {
             </template>
           </p>
           <div v-if="ui.menu.kind === 'local-over'" class="room-actions">
+            <button v-if="ui.match.over" class="front-primary" @click="actions.startLocal">再来一局 <span class="front-arrow front-arrow-diagonal" aria-hidden="true"></span></button>
             <button v-if="!ui.match.over" id="local-again" class="front-primary" @click="actions.playAgainLocal">
               下一局
             </button>
-            <button :class="{ 'front-primary': ui.match.over }" @click="actions.exitToHome">返回首页</button>
+            <button class="result-home" @click="actions.exitToHome">返回首页</button>
           </div>
           <template v-else>
             <div class="room-actions">

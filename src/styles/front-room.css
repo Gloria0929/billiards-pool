@@ -1241,3 +1241,65 @@
     margin: 16px 0;
   }
 }
+
+/* 结算以本局成绩为主，赛制局分作为辅助信息。 */
+#ov.result-room { grid-template-columns: minmax(0, 34fr) minmax(0, 66fr); }
+.result-room .front-panel { max-width: 900px; }
+.result-room .menu-body { padding-block: 48px; }
+.result-room .menu-heading { margin-bottom: 30px; }
+.result-eyebrow { margin: 0 0 16px; color: var(--fg-2); font-size: 11px; letter-spacing: .1em; }
+.result-eyebrow span { margin-inline: 8px; color: var(--fg-3); }
+.result-room #ovt { font-size: clamp(36px, 4vw, 56px); font-weight: 500; }
+.result-room .result-scoreboard { border-radius: 0; border-inline: 0; margin-bottom: 28px; }
+.result-room .result-score { padding: 24px 18px; gap: 14px; background: transparent; }
+.result-room .result-score.winner { background: linear-gradient(180deg, #d7c59b0b, transparent); }
+.result-room .result-player { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--fg); font-size: 14px; }
+.result-player small { color: var(--fg-3); font-size: 10px; }
+.result-score.winner .result-player small { color: #d7c59b; }
+.result-room .result-score strong { font-family: var(--mono); font-size: clamp(54px, 6vw, 82px); font-weight: 400; letter-spacing: -.06em; }
+.result-room .result-score.winner strong { color: #e5d5ae; }
+.result-room .result-score-unit { font-size: 10px; color: var(--fg-3); letter-spacing: .08em; }
+.result-room .room-actions { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 12px; }
+.result-room .room-actions > button { min-height: 48px; flex: 1; }
+.result-room .room-actions .front-primary { flex: 1 1 0; width: auto; }
+.result-room .room-actions .result-home { flex: 0 0 auto; padding-inline: 20px; background: transparent; }
+.result-room .maximum-break { margin-bottom: 24px; padding-block: 20px; }
+
+/* 破百当下的庆祝：不截获鼠标，也不打断击球。 */
+.break-celebration {
+  position: fixed; z-index: 21; top: clamp(100px, 23vh, 220px); left: 50%;
+  width: min(360px, calc(100vw - 48px)); transform: translateX(-50%);
+  display: grid; justify-items: center; gap: 9px; padding: 26px 22px;
+  border: 1px solid #9ac5b48c; border-radius: 16px;
+  background: #10211df2; color: #c3eddb; backdrop-filter: blur(18px);
+  box-shadow: 0 24px 90px #0008, 0 0 70px #73bb9e26, inset 0 0 45px #a3d0bb09;
+  text-align: center; pointer-events: none;
+}
+.break-celebration.is-maximum { color: #f6df9c; border-color: #e5cd9299; background: #261f12f2; box-shadow: 0 24px 90px #0008, 0 0 90px #d9b65733; }
+.break-celebration-kicker { font-size: 10px; letter-spacing: .25em; }
+.break-celebration > strong { font: 400 80px/1 var(--mono); letter-spacing: -.08em; padding-right: .08em; }
+.break-celebration > b { font-size: 22px; font-weight: 500; letter-spacing: .08em; }
+.break-celebration > span:last-child { font-size: 12px; opacity: .75; }
+.break-sparks { position: absolute; inset: 50%; }
+.break-sparks i { position: absolute; width: 4px; height: 10px; border-radius: 1px; background: currentColor; opacity: 0; animation: break-spark 1.8s calc(var(--i) * 30ms) ease-out; }
+@keyframes break-spark {
+  0% { opacity: 0; transform: rotate(calc(var(--i) * 30deg)) translateY(-60px); }
+  15% { opacity: .9; }
+  100% { opacity: 0; transform: rotate(calc(var(--i) * 30deg)) translateY(-230px); }
+}
+.break-toast-enter-active, .break-toast-leave-active { transition: opacity 350ms, transform 350ms; }
+.break-toast-enter-from, .break-toast-leave-to { opacity: 0; transform: translate(-50%, 16px) scale(.96); }
+@media (max-width: 760px) {
+  #ov.result-room { grid-template-columns: 1fr; }
+  .result-room .front-photo { height: 140px; }
+  .result-room .menu-body { padding-block: 24px 32px; }
+  .result-room .menu-heading { margin-bottom: 20px; }
+  .result-room #ovt { font-size: 34px; }
+  .result-room .result-score { padding: 20px 10px; }
+  .result-room .result-score strong { font-size: 60px; }
+  .result-eyebrow { margin-bottom: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .break-sparks i { animation: none; }
+  .break-toast-enter-active, .break-toast-leave-active { transition: none; }
+}
