@@ -26,8 +26,15 @@ const watching = computed(
 
 const turnNote = computed(() => {
   const { online, turn, phase, names, spin, power } = props.ui
-  if (online.status === 'idle')
-    return turn === 1 && phase === 'aim' && names ? '电脑正在瞄准…' : ''
+  const spinLabels = []
+  if (Math.abs(spin.y) > 0.02) spinLabels.push(spin.y > 0 ? '高杆' : '低杆')
+  if (Math.abs(spin.x) > 0.02) spinLabels.push(spin.x > 0 ? '右塞' : '左塞')
+  const detail = spinLabels.length ? ' ' + spinLabels.join('') : ''
+  const shotNote = `力度 ${Math.round(power * 100)}%${detail}`
+  if (online.status === 'idle') {
+    if (turn !== 1 || phase !== 'aim' || !names) return ''
+    return props.ui.aiShotReady ? `电脑正在瞄准… · ${shotNote}` : '电脑正在瞄准…'
+  }
   if (online.status !== 'playing') return ''
   if (online.opponentLeft) return '对手已离开'
   if (online.waiting) return '正在同步击球…'
@@ -35,11 +42,7 @@ const turnNote = computed(() => {
 
   const opponent = 1 - online.seat
   const name = names?.[opponent] || online.players?.[opponent]?.name || '对手'
-  const spinLabels = []
-  if (Math.abs(spin.y) > 0.02) spinLabels.push(spin.y > 0 ? '高杆' : '低杆')
-  if (Math.abs(spin.x) > 0.02) spinLabels.push(spin.x > 0 ? '右塞' : '左塞')
-  const detail = spinLabels.length ? ' ' + spinLabels.join('') : ''
-  return `正在观看 ${name} 瞄准… · 力度 ${Math.round(power * 100)}%${detail}`
+  return `正在观看 ${name} 瞄准… · ${shotNote}`
 })
 
 const views = [

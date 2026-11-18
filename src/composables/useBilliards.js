@@ -65,6 +65,7 @@ export function useBilliards() {
     showGuide: true,
     guideMode: 'simple',
     aiDifficulty: 'normal',
+    aiShotReady: false,
     bestOf: 1,
     match: publicSeries(createSeries(1)),
     canShoot: false,
@@ -354,6 +355,7 @@ export function useBilliards() {
   function clearAiTimer() {
     if (aiTimer) clearTimeout(aiTimer)
     aiTimer = null
+    ui.aiShotReady = false
   }
 
   function aiTurnReady() {
@@ -380,6 +382,7 @@ export function useBilliards() {
     engine.angle = shot.angle
     engine.setPower(shot.power, false)
     engine.setSpin(shot.spin, false)
+    ui.aiShotReady = true
     aiTimer = setTimeout(() => {
       aiTimer = null
       if (!aiTurnReady()) return
