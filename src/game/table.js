@@ -492,6 +492,11 @@ float clothNoise(vec2 point) {
   return mix(mix(clothHash(cell), clothHash(cell + vec2(1.0, 0.0)), f.x),
     mix(clothHash(cell + vec2(0.0, 1.0)), clothHash(cell + vec2(1.0)), f.x), f.y);
 }
+float chalkStroke(float distance, float pixelWidth) {
+  float aa = max(pixelWidth, 0.001);
+  float halfWidth = max(1.15, aa * 0.6);
+  return 1.0 - smoothstep(halfWidth - aa * 0.5, halfWidth + aa * 0.5, abs(distance));
+}
 ${shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
   vec2 clothEdge = clothHalfSize - abs(clothPosition);
   float railShade = 0.32 * exp(-max(0.0, min(clothEdge.x, clothEdge.y)) / 19.0);
@@ -503,11 +508,14 @@ ${shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fr
   diffuseColor.rgb *= (1.0 - railShade) * (1.0 - lipShade) * nap;
 
   vec2 fromLine = clothPosition - vec2(clothMark.x, 0.0);
-  float chalkDistance = abs(fromLine.x);
+  // Filter each signed distance in screen pixels so thin markings stay continuous
+  // when the cloth is viewed at a grazing angle.
+  float mark = chalkStroke(fromLine.x, fwidth(fromLine.x));
+  float arcDistance = length(fromLine) - clothMark.y;
+  float arcMark = chalkStroke(arcDistance, fwidth(arcDistance));
   if (clothMark.y > 0.0 && fromLine.x < 0.0) {
-    chalkDistance = min(chalkDistance, abs(length(fromLine) - clothMark.y));
+    mark = max(mark, arcMark);
   }
-  float mark = 1.0 - smoothstep(0.5, 1.8, chalkDistance);
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.51, 0.40), mark * 0.23);
 `)}`
   }
