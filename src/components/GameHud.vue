@@ -36,9 +36,9 @@ const turnNote = computed(() => {
   const opponent = 1 - online.seat
   const name = names?.[opponent] || online.players?.[opponent]?.name || '对手'
   const spinLabels = []
-  if (Math.abs(spin.x) > 0.02) spinLabels.push(spin.x > 0 ? '右塞' : '左塞')
   if (Math.abs(spin.y) > 0.02) spinLabels.push(spin.y > 0 ? '高杆' : '低杆')
-  const detail = spinLabels.length ? ' · ' + spinLabels.join('·') : ''
+  if (Math.abs(spin.x) > 0.02) spinLabels.push(spin.x > 0 ? '右塞' : '左塞')
+  const detail = spinLabels.length ? ' ' + spinLabels.join('') : ''
   return `正在观看 ${name} 瞄准… · 力度 ${Math.round(power * 100)}%${detail}`
 })
 
