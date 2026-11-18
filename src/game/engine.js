@@ -11,6 +11,7 @@ import { createTable, createTableEnvironment, tableMargins, TABLE_FLOOR } from '
 import { createRoomShell, loadTableMaps, surfaceColor } from './table-materials.js'
 import { createCue } from './cue.js'
 import * as audio from './audio.js'
+import { renderQuality } from './render-quality.js'
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z)
@@ -86,6 +87,7 @@ export class BilliardsEngine {
     this.onError = null
     this.onReady = null
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    this.quality = renderQuality(window.matchMedia('(pointer: coarse)').matches, window.devicePixelRatio || 1)
 
     this.initScene()
     this.bindInput()
@@ -100,7 +102,7 @@ export class BilliardsEngine {
     try {
       this.renderer = new THREE.WebGLRenderer({
         canvas: this.canvas,
-        antialias: true,
+        antialias: this.quality.antialias,
         alpha: true,
       })
     } catch (error) {
@@ -111,10 +113,10 @@ export class BilliardsEngine {
     rd.outputEncoding = THREE.sRGBEncoding
     rd.toneMapping = THREE.ACESFilmicToneMapping
     rd.toneMappingExposure = 1
-    rd.shadowMap.enabled = true
+    rd.shadowMap.enabled = this.quality.shadows
     rd.shadowMap.type = THREE.VSMShadowMap
     rd.shadowMap.autoUpdate = false
-    this.tableMaps = loadTableMaps(rd.capabilities.getMaxAnisotropy())
+    this.tableMaps = loadTableMaps(Math.min(this.quality.anisotropy, rd.capabilities.getMaxAnisotropy()))
     this.tableMapTextures = new Set(Object.values(this.tableMaps))
     this.scene = new THREE.Scene()
     this.scene.background = surfaceColor(0x141917)
@@ -396,7 +398,7 @@ export class BilliardsEngine {
     this.geo = getGeometry(state.mode)
     this.clearBalls()
     if (this.sg) this.sg.dispose()
-    this.sg = new THREE.SphereGeometry(this.geo.R, 32, 24)
+    this.sg = new THREE.SphereGeometry(this.geo.R, ...(this.quality?.ballSegments ?? [32, 24]))
     this.buildTable()
     for (const ball of state.balls) {
       const entry = this.createBallMesh(ball.n)
@@ -694,10 +696,15 @@ export class BilliardsEngine {
       state.balls.map((b) => [b.n, b.on, b.x, b.y, b.vx, b.vy, b.wx, b.wy, b.wz, b.m, b.mu]),
     ])
     if (this.aimGuideKey !== key) {
+      const now = performance.now()
+      const adjusting = this.aiming || this.drag || this.pull || this.space
+      if (this.aimGuide && adjusting && now - this.aimGuideAt < (this.quality?.guideInterval ?? 0))
+        return this.aimGuide
       this.aimGuide = buildAimGuide(this.geo, state.balls, this.angle, this.guideMode === 'full', {
         power: this.power, spin: this.spin, breakShot: state.breakShot,
       })
       this.aimGuideKey = key
+      this.aimGuideAt = now
     }
     return this.aimGuide
   }
@@ -743,7 +750,7 @@ export class BilliardsEngine {
     const cw = this.container.clientWidth
     const ch = this.container.clientHeight
     if (!cw || !ch) return
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
+    this.renderer.setPixelRatio(this.quality?.pixelRatio ?? Math.min(2, window.devicePixelRatio || 1))
     this.renderer.setSize(cw, ch, false)
     for (const line of [this.lineA, this.lineB, this.lineC, this.bankCueLine, this.bankObjectLine])
       line.material.resolution.set(cw, ch)
@@ -762,6 +769,10 @@ export class BilliardsEngine {
     if (this.disposed) return
     const dt = Math.min(0.05, (t - this.last) / 1000)
     this.last = t
+    if (this.overlayOpen || (typeof document !== 'undefined' && document.hidden)) {
+      requestAnimationFrame(this.loop)
+      return
+    }
     if (this.strikeT > 0) {
       this.strikeT += dt
       if (this.strikeT >= 0.1) {

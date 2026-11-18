@@ -10,7 +10,7 @@ import {
   publicSeries,
   recordFrameResult,
 } from '../game/series.js'
-import { chooseAiShot } from '../game/ai.js'
+import { AiPlanner } from '../game/ai-planner.js'
 import * as audio from '../game/audio.js'
 import { NetClient } from '../net/client.js'
 
@@ -33,6 +33,7 @@ export function useBilliards() {
   let lastAimPayload = ''
   let lastAimTurn = null
   let aiTimer = null
+  const aiPlanner = new AiPlanner()
   let connectPromise = null
   let localSeries = createSeries(1)
 
@@ -357,6 +358,7 @@ export function useBilliards() {
   }
 
   function clearAiTimer() {
+    aiPlanner.cancel()
     if (aiTimer) clearTimeout(aiTimer)
     aiTimer = null
     ui.aiShotReady = false
@@ -379,10 +381,11 @@ export function useBilliards() {
     aiTimer = setTimeout(runAiTurn, 900)
   }
 
-  function runAiTurn() {
+  async function runAiTurn() {
     aiTimer = null
     if (!aiTurnReady()) return
-    const shot = chooseAiShot(state, 1, ui.aiDifficulty)
+    const shot = await aiPlanner.plan(state, 1, ui.aiDifficulty)
+    if (!shot || !aiTurnReady()) return
     engine.angle = shot.angle
     engine.setPower(shot.power, false)
     engine.setSpin(shot.spin, false)
