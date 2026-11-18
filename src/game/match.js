@@ -181,6 +181,10 @@ export function createMatch(mode, seed = (Math.random() * 2 ** 32) >>> 0, names 
     nineFouls: [0, 0],
     sn: {
       score: [0, 0],
+      breakScore: 0,
+      breakSeat: null,
+      maximumBreak: null,
+      centuryBreak: null,
       onRed: true,
       idx: 0,
       finalColor: false,
@@ -276,6 +280,8 @@ export function resolveFrameChoice(state, decision, freeBall) {
     state.phase = 'aim'
     state.turn = state.sn.blackOpener ?? state.turn
     state.quietShots = 0
+    state.sn.breakScore = 0
+    state.sn.breakSeat = null
     state.message = `${playerLabel(state, state.turn)}重开抢黑`
     return state
   }
@@ -335,8 +341,10 @@ export function launchShot(state, shot) {
   state.shotStart = captureShotStart(state)
   state.shotAngle = angle
 
+  // 斯诺克低档位留给轻推与走位，高档位仍可强击。
+  const baseSpeed = state.mode === 'snk' ? 80 + power * power * 8420 : 200 + power * 8300
   const speed =
-    ((200 + power * 8300) * (state.breakShot ? BREAK_SPEED_BOOST : 1)) /
+    (baseSpeed * (state.breakShot && state.mode !== 'snk' ? BREAK_SPEED_BOOST : 1)) /
     (1 + 0.9 * (spin.x * spin.x + spin.y * spin.y))
   const dx = Math.cos(angle)
   const dy = Math.sin(angle)
@@ -421,6 +429,10 @@ export function publicState(state) {
     nineFouls: [...(state.nineFouls || [0, 0])],
     sn: {
       score: [...state.sn.score],
+      breakScore: state.sn.breakScore ?? 0,
+      breakSeat: state.sn.breakSeat ?? null,
+      maximumBreak: state.sn.maximumBreak ? { ...state.sn.maximumBreak } : null,
+      centuryBreak: state.sn.centuryBreak ? { ...state.sn.centuryBreak } : null,
       onRed: state.sn.onRed,
       idx: state.sn.idx,
       finalColor: !!state.sn.finalColor,
@@ -459,6 +471,10 @@ export function hydrateState(data) {
     b.mu = b.mu || 1
   })
   state.sn = state.sn || { score: [0, 0], onRed: true, idx: 0 }
+  state.sn.breakScore ??= 0
+  state.sn.breakSeat ??= null
+  state.sn.maximumBreak ??= null
+  state.sn.centuryBreak ??= null
   state.sn.finalColor = !!state.sn.finalColor
   state.sn.choice = state.sn.choice || null
   state.sn.freeBall = state.sn.freeBall || null
@@ -486,6 +502,8 @@ export function snapshot(state) {
     message: state.message,
     groups: [...state.grp],
     scores: [...state.sn.score],
+    maximumBreak: state.sn.maximumBreak ? { ...state.sn.maximumBreak } : null,
+    centuryBreak: state.sn.centuryBreak ? { ...state.sn.centuryBreak } : null,
     onRed: state.sn.onRed,
     colorIndex: state.sn.idx,
     finalColor: !!state.sn.finalColor,

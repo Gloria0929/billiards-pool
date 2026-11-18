@@ -1,6 +1,7 @@
 import { getGeometry } from './geometry.js'
 import { castRay, moving, step } from './physics.js'
 import { launchShot, simulateShot } from './match.js'
+import { BX, DR, MODES, clamp } from './constants.js'
 
 const SOLIDS = 'solid'
 
@@ -8,7 +9,6 @@ const SOLIDS = 'solid'
 // randomPick 是不挑最近可进球、改从全部可进球里随机挑的概率。
 // hard 还会优先挑切角小、距离短、成功率最高的球，并在击球前用物理模拟
 // 比较几种加塞 / 高低杆，选进球且白球走位最好的那一种（见 chooseAiShot）。
-// normal 与改动前的固定水平完全一致。
 export const AI_DIFFICULTY = {
   easy: { angle: 0.032, power: 0.2, safety: 0.08, randomPick: 0.3 },
   normal: { angle: 0.008, power: 0.04, safety: 0.02, randomPick: 0 },
@@ -206,18 +206,35 @@ function potCandidates(state, target) {
         1,
         ((target.x - cue.x) * ux + (target.y - cue.y) * uy) / targetDistance,
       )
+    const travel = cueDistance + pocketDistance * 0.7
+    const power = state.mode === 'snk'
+      ? clamp(0.2 + travel / 9000, 0.2, 0.5)
+      : clamp(0.28 + travel / 4500, 0.28, 0.9)
     candidates.push({
       target,
       angle: Math.atan2(cueDy, cueDx),
       distance: cueDistance + pocketDistance * 0.8,
       cut: cutCos,
-      power: Math.max(
-        0.28,
-        Math.min(0.9, 0.28 + (cueDistance + pocketDistance * 0.7) / 4500),
-      ),
+      power,
     })
   }
   return candidates
+}
+
+function snookerBreakShot(state, geo) {
+  const reds = state.balls.filter((ball) => ball.on && ball.n >= 1 && ball.n <= 15)
+  if (!reds.length) return null
+  // 从 D 区一侧薄碰最外侧红球，避免直接冲进红球堆或先撞彩球。
+  const side = state.seed & 1 ? 1 : -1
+  const cue = state.inHand
+    ? { x: BX - DR * 0.5, y: geo.H / 2 + side * DR * 0.65 }
+    : { x: state.balls[0].x, y: state.balls[0].y }
+  const target = reds.reduce((best, ball) => side * ball.y > side * best.y ? ball : best)
+  const dx = target.x - cue.x
+  const dy = target.y - cue.y
+  const distance = Math.hypot(dx, dy)
+  const angle = Math.atan2(dy, dx) + side * Math.asin(Math.min(1, 2 * geo.R * 0.85 / distance))
+  return { angle, power: MODES.snk.breakPower, spin: { x: 0, y: 0 }, cue }
 }
 
 export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
@@ -225,6 +242,11 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
   const geo = state.geo || getGeometry(state.mode)
   const cue = state.balls[0]
   const cueRef = { x: cue.x, y: cue.y }
+
+  if (state.mode === 'snk' && state.breakShot) {
+    const shot = snookerBreakShot(state, geo)
+    if (shot) return shot
+  }
 
   if ((state.mode === 'pool' || state.mode === 'nine') && state.breakShot) {
     const rack =
@@ -273,9 +295,17 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
   }
   if (best) {
     const angle = best.angle + (Math.random() - 0.5) * d.angle
+    const packedRed = state.mode === 'snk' && best.target.n <= 15 && state.balls.some((ball) =>
+      ball.on && ball.n >= 1 && ball.n <= 15 && ball.n !== best.target.n &&
+      Math.hypot(ball.x - best.target.x, ball.y - best.target.y) < 4 * geo.R)
+    // 对密集红球限力，随机力度误差也不能把轻碰变成炸堆。
+    const cueDistance = Math.hypot(best.target.x - cue.x, best.target.y - cue.y)
+    const maxPower = packedRed
+      ? clamp(0.2 + cueDistance / 14000, 0.35, 0.42)
+      : state.mode === 'snk' ? 0.5 : 0.95
     const power = Math.max(
       0.25,
-      Math.min(0.95, best.power + (Math.random() - 0.5) * d.power),
+      Math.min(maxPower, best.power + (Math.random() - 0.5) * d.power),
     )
     if (difficulty === 'hard') {
       let picked = null
@@ -312,17 +342,20 @@ export function chooseAiShot(state, seat = 1, difficulty = 'normal') {
       0,
     )
     const clear = hit.ball === target
+    const power = state.mode === 'snk'
+      ? Math.max(0.2, Math.min(0.4, 0.2 + distance / 14000))
+      : Math.max(0.3, Math.min(0.8, 0.35 + distance / 5000))
     if (clear && (!direct || distance < direct.distance))
       direct = {
         angle: Math.atan2(dy, dx),
-        power: Math.max(0.3, Math.min(0.8, 0.35 + distance / 5000)),
+        power,
         distance,
       }
     const score = distance + (clear ? 0 : 10000)
     if (!safety || score < safety.score)
       safety = {
         angle: Math.atan2(dy, dx),
-        power: Math.max(0.3, Math.min(0.8, 0.35 + distance / 5000)),
+        power,
         score,
       }
   }

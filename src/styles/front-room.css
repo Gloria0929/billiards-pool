@@ -950,6 +950,96 @@
    结算
    ========================================================================== */
 
+.maximum-break {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin: 0 0 22px;
+  padding: 24px 16px;
+  border: 1px solid #bfa66a66;
+  border-radius: 12px;
+  background: #1c1912;
+  color: #e5cd92;
+  text-align: center;
+  animation: maximum-arrive 650ms ease-out both;
+}
+
+.maximum-break::before {
+  content: '✦';
+  position: absolute;
+  top: 22px;
+  right: 28px;
+  color: #e5cd9299;
+  font-size: 20px;
+}
+
+.maximum-break::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 35%, #f4dfae14 50%, transparent 65%);
+  transform: translateX(-100%);
+  animation: maximum-glint 1400ms 350ms ease-out both;
+  pointer-events: none;
+}
+
+.maximum-break-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+}
+
+.maximum-break strong {
+  font-family: var(--mono);
+  font-size: clamp(64px, 10vw, 88px);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.08em;
+  padding-right: 0.08em;
+}
+
+.maximum-break p {
+  margin: 2px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.maximum-break small {
+  color: #c3b79b;
+  font-size: 11px;
+}
+
+.century-break {
+  border-color: #87b3a366;
+  background: #141e1b;
+  color: #b2d7c9;
+}
+
+.century-break::before {
+  color: #b2d7c999;
+}
+
+.century-break small {
+  color: #a3b9b0;
+}
+
+@keyframes maximum-arrive {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes maximum-glint {
+  to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maximum-break, .maximum-break::after {
+    animation: none;
+  }
+}
+
 .result-scoreboard {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

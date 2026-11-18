@@ -228,14 +228,8 @@ function endNine(state) {
   const fouls = state.nineFouls || [0, 0]
   state.breakShot = false
 
-  if (pottedNine && !foul && !wasBreak) {
-    finish(state, me, '合法打进9号球')
-    return
-  }
-  if (pottedNine && wasBreak && !foul) {
-    spotNine(state)
-    state.turn = me
-    state.message = '开球打进9号球 · 9号复位，继续击球'
+  if (pottedNine && !foul) {
+    finish(state, me, wasBreak ? '开球合法打进9号球' : '合法打进9号球')
     return
   }
   // 9 号球违规落袋或被击出球台：复位，不能借此结束本局。
@@ -287,6 +281,8 @@ function startBlackOff(state) {
   state.sn.freeBall = null
   state.sn.choice = { kind: 'black', seat: state.turn, offender: 1 - state.turn }
   state.sn.missStreak = { seat: null, count: 0 }
+  state.sn.breakScore = 0
+  state.sn.breakSeat = null
   state.phase = 'choice'
   state.message = `平分，黑球复位，${playerLabel(
     state,
@@ -582,6 +578,17 @@ function endSnooker(state) {
     why = '用指定自由球给对手做斯诺克'
 
   const foul = !!why
+  const breakBefore = state.sn.breakSeat === me ? state.sn.breakScore ?? 0 : 0
+  if (foul || !points) {
+    state.sn.breakScore = 0
+    state.sn.breakSeat = null
+  } else {
+    state.sn.breakScore = breakBefore + points
+    state.sn.breakSeat = me
+    if (state.sn.breakScore >= 100 && state.sn.breakScore > (state.sn.centuryBreak?.points ?? 0))
+      state.sn.centuryBreak = { seat: me, points: state.sn.breakScore }
+  }
+  const centuryReached = !foul && breakBefore < 100 && state.sn.breakScore >= 100
   const onlyBlack = !redOn && !anyColorOn &&
     startingBalls.filter((ball) => ball.on && ball.n).every((ball) => ball.n === 21)
   state.sn.freeBall = null
@@ -688,6 +695,9 @@ function endSnooker(state) {
     state.phase = 'aim'
   }
 
+  if (!foul && !state.sn.decider && state.sn.idx > 5 && state.sn.breakScore === 147)
+    state.sn.maximumBreak = { seat: me, points: 147 }
+
   // 只剩黑球时，第一次进球或犯规即结束本局；同分则黑球复位决胜。
   if (foul && onlyBlack) {
     const a = state.sn.score[0]
@@ -717,7 +727,7 @@ function endSnooker(state) {
     finish(state, a > b ? 0 : 1, `黑球阶段，分差超过7分 (${a} : ${b})`)
     return
   }
-  state.message = txt + ' · 目标:' + snookerTarget(state)
+  state.message = txt + (centuryReached ? ' · ✦ 单杆破百！' : '') + ' · 目标:' + snookerTarget(state)
 }
 
 export function endShot(state) {

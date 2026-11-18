@@ -469,10 +469,8 @@ export class BilliardsEngine {
     this.onCharge?.(false)
     this.onPhase?.('moving')
     audio.ensureAudio()
-    const spin = shot.spin || { x: 0, y: 0 }
-    const speed =
-      (200 + (shot.power ?? 0.45) * 8300) /
-      (1 + 0.9 * (spin.x * spin.x + spin.y * spin.y))
+    const cue = this.state.balls[0]
+    const speed = Math.hypot(cue.vx, cue.vy)
     audio.playEvent('c', speed, 0, 'cue')
   }
 

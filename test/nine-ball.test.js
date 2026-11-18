@@ -27,6 +27,7 @@ function settle(state, {
   state.railAfterContact = rail
   for (const ball of state.balls)
     if (pots.includes(ball.n) || (scratch && ball.n === 0)) ball.on = false
+  state.phase = 'aim'
   endShot(state)
 }
 
@@ -59,6 +60,32 @@ test('九球合法打进 9 号球本局结束', () => {
   assert.equal(state.phase, 'over')
   assert.equal(state.winner, 0)
   assert.match(state.message, /合法打进9号球/)
+})
+
+test('九球开球合法进 9 号直接获胜，不复位也不要求额外碰库', () => {
+  for (const turn of [0, 1]) {
+    const state = createMatch('nine', 7)
+    state.turn = turn
+    settle(state, { first: 1, pots: [9], rail: false })
+    assert.equal(state.phase, 'over')
+    assert.equal(state.winner, turn)
+    assert.equal(state.balls.find((ball) => ball.n === 9).on, false)
+    assert.equal(state.breakChoice, null)
+    assert.match(state.message, /开球合法打进9号球/)
+  }
+})
+
+test('九球开球进 9 号同时犯规，不获胜并复位 9 号', () => {
+  for (const shot of [{ first: 1, scratch: true }, { first: 2 }, {}]) {
+    const state = createMatch('nine', 7)
+    settle(state, { ...shot, pots: [9] })
+    assert.equal(state.phase, 'aim')
+    assert.equal(state.winner, null)
+    assert.equal(state.balls.find((ball) => ball.n === 9).on, true)
+    assert.equal(state.turn, 1)
+    assert.equal(state.inHand, true)
+    assert.deepEqual(state.nineFouls, [1, 0])
+  }
 })
 
 test('九球白球落袋同时进 9：9 号复位，对手自由球', () => {

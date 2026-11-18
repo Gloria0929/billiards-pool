@@ -302,6 +302,18 @@ function openOnlineFromLobby() {
         </template>
 
         <template v-else-if="outcome">
+          <div v-if="ui.mode === 'snk' && ui.snookerMaximum" class="maximum-break" role="status">
+            <span class="maximum-break-label">MAXIMUM BREAK</span>
+            <strong>147</strong>
+            <p>{{ ui.names?.[ui.snookerMaximum.seat] || "玩家" + (ui.snookerMaximum.seat + 1) }} · 单杆满分</p>
+            <small>这一杆，值得记住。</small>
+          </div>
+          <div v-else-if="ui.mode === 'snk' && ui.snookerCentury" class="maximum-break century-break" role="status">
+            <span class="maximum-break-label">CENTURY BREAK</span>
+            <strong>{{ ui.snookerCentury.points }}</strong>
+            <p>{{ ui.names?.[ui.snookerCentury.seat] || "玩家" + (ui.snookerCentury.seat + 1) }} · 单杆破百</p>
+            <small>好球，破百了。</small>
+          </div>
           <div v-if="ui.mode === 'snk' || matchScore" class="result-scoreboard" :aria-label="matchScore ? '局分' : '本局得分'">
             <div v-for="seat in [0, 1]" :key="seat" class="result-score" :class="{ winner: ui.winner === seat }">
               <span>{{ ui.names?.[seat] || "玩家" + (seat + 1) }}</span>

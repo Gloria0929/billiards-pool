@@ -47,6 +47,8 @@ export function useBilliards() {
     groups: [null, null],
     scores: [0, 0],
     snookerRemaining: 0,
+    snookerMaximum: null,
+    snookerCentury: null,
     nineTarget: 0,
     nineRemaining: 0,
     snookerOnRed: true,
@@ -191,6 +193,8 @@ export function useBilliards() {
     ui.turn = snap.turn
     ui.groups = snap.groups
     ui.scores = snap.scores
+    ui.snookerMaximum = snap.maximumBreak
+    ui.snookerCentury = snap.centuryBreak
     ui.snookerRemaining =
       snap.mode === 'snk' ? snookerPointsRemaining(state) : 0
     const nineBalls = snap.balls.filter((ball) => ball.on && ball.n > 0)
