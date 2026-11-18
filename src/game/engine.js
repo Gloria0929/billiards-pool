@@ -359,7 +359,7 @@ export class BilliardsEngine {
     }
     const { W, H } = this.geo
     this.tg = createTable(this.geo, this.tableMaps)
-    if (this.quality?.backgroundGuide) batchStaticMeshes(this.tg)
+    batchStaticMeshes(this.tg)
     this.scene.add(this.tg)
     const [railX, railY] = tableMargins(this.geo)
     this.tableShadow.scale.set((W + railX * 2) * 1.48, 1, (H + railY * 2) * 1.72)
@@ -619,13 +619,21 @@ export class BilliardsEngine {
     const { R } = geo
     const tx = (x) => toWorldX(geo, x)
     const tz = (y) => toWorldZ(geo, y)
-    for (const ball of state.balls) {
+    const blend = this.animating ? (this.ballPositionBlend ?? 1) : 1
+    for (let i = 0; i < state.balls.length; i++) {
+      const ball = state.balls[i]
       const entry = this.meshes.get(ball.n)
       if (!entry) continue
       const m = entry.mesh
+      let { x, y } = ball
+      if (ball.on && blend < 1) {
+        const [fromX, fromY] = this.previousBallPositions[i]
+        x = fromX + (x - fromX) * blend
+        y = fromY + (y - fromY) * blend
+      }
       if (ball.on) {
         m.visible = true
-        m.position.set(tx(ball.x), R, tz(ball.y))
+        m.position.set(tx(x), R, tz(y))
       } else if (ball.q && ball.st < POCKET_DROP_TIME) {
         const k = ball.st / POCKET_DROP_TIME
         const travel = 1 - Math.exp(-k * 4)
@@ -645,7 +653,7 @@ export class BilliardsEngine {
         }
       } else m.visible = false
       entry.shadow.visible = ball.on
-      entry.shadow.position.set(tx(ball.x), 1.5, tz(ball.y))
+      entry.shadow.position.set(tx(x), 1.5, tz(y))
       entry.shadow.scale.setScalar(2.7 * R)
     }
     const cue = state.balls[0]
@@ -823,7 +831,18 @@ export class BilliardsEngine {
     if (this.animating && this.state && !this.overlayOpen) {
       this.acc += dt
       const t0 = this.simTime
+      this.ballPositionBlend = 1
       while (this.acc >= DT && this.animSteps < MAX_SIM_STEPS && moving(this.state.balls)) {
+        if (this.quality?.interpolateBallMotion && this.acc < 2 * DT) {
+          // 画面在最后两次物理结果之间取样，固定步长的球位继续用于碰撞和判罚。
+          const positions = this.previousBallPositions ??= []
+          this.state.balls.forEach((ball, index) => {
+            const position = positions[index] ??= [0, 0]
+            position[0] = ball.x
+            position[1] = ball.y
+          })
+          this.ballPositionBlend = (this.acc - DT) / DT
+        }
         step(this.state)
         this.acc -= DT
         this.simTime += DT

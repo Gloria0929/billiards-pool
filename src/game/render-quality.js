@@ -7,5 +7,6 @@ export function renderQuality(coarsePointer, devicePixelRatio = 1) {
     ballSegments: [32, 24],
     anisotropy: 8,
     backgroundGuide: coarsePointer,
+    interpolateBallMotion: !coarsePointer,
   }
 }
