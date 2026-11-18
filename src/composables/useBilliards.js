@@ -53,8 +53,7 @@ export function useBilliards() {
     snookerRemaining: 0,
     snookerMaximum: null,
     snookerCentury: null,
-    snookerBreakScore: 0,
-    snookerBreakSeat: null,
+    snookerCelebration: null,
     nineTarget: 0,
     nineRemaining: 0,
     snookerOnRed: true,
@@ -206,7 +205,7 @@ export function useBilliards() {
   })
 
   /* ---------- 状态同步 ---------- */
-  function syncUi() {
+  function syncUi({ celebrateBreak = false } = {}) {
     if (!state) return
     const snap = snapshot(state)
     ui.mode = snap.mode
@@ -215,10 +214,15 @@ export function useBilliards() {
     ui.turn = snap.turn
     ui.groups = snap.groups
     ui.scores = snap.scores
+    if (!snap.centuryBreak && !snap.maximumBreak) ui.snookerCelebration = null
+    if (celebrateBreak) {
+      if (snap.maximumBreak && !ui.snookerMaximum)
+        ui.snookerCelebration = { ...snap.maximumBreak, full: true }
+      else if (snap.centuryBreak && !ui.snookerCentury)
+        ui.snookerCelebration = { ...snap.centuryBreak, full: false }
+    }
     ui.snookerMaximum = snap.maximumBreak
     ui.snookerCentury = snap.centuryBreak
-    ui.snookerBreakScore = snap.breakScore
-    ui.snookerBreakSeat = snap.breakSeat
     ui.snookerRemaining =
       snap.mode === 'snk' ? snookerPointsRemaining(state) : 0
     const nineBalls = snap.balls.filter((ball) => ball.on && ball.n > 0)
@@ -748,7 +752,7 @@ export function useBilliards() {
     }
     endShot(state)
     if (state.mode === 'pool') localSeries.breakMisses = [...state.breakMisses]
-    syncUi()
+    syncUi({ celebrateBreak: true })
     if (state.phase === 'over') {
       openOverlayForResult()
       return
@@ -773,7 +777,7 @@ export function useBilliards() {
     pendingServer = null
     engine.applyState(state)
     primeBreakPower()
-    syncUi()
+    syncUi({ celebrateBreak: true })
     if (state.phase === 'over' && ui.online.status === 'playing') openOverlayForResult()
     else {
       syncOnlineBreakChoice()
@@ -1127,6 +1131,7 @@ export function useBilliards() {
       ui.online.status = 'playing'
       ui.online.waiting = false
       ui.online.requests = []
+      ui.snookerCelebration = null
       if (message.match) ui.match = publicSeries(message.match)
       pendingServer = null
       lastAimPayload = ''
