@@ -149,6 +149,7 @@ export function step(state) {
   const balls = state.balls
   for (const b of balls) {
     if (!b.on) continue
+    if (!(b.vx || b.vy || b.wx || b.wy || b.wz)) continue
     b.x += b.vx * DT
     b.y += b.vy * DT
     const ux = b.vx - R * b.wy
@@ -176,7 +177,7 @@ export function step(state) {
         b.wy = b.vx / R
       }
     }
-    b.wz *= 1 - DT * 1.5
+    b.wz = Math.abs(b.wz) < 1e-4 ? 0 : b.wz * (1 - DT * 1.5)
     wall(state, b)
   }
   if (state.mode === 'pool') {
@@ -243,7 +244,7 @@ export function step(state) {
     }
   }
   for (const b of balls) {
-    if (!b.on) continue
+    if (!b.on || !(b.vx || b.vy)) continue
     for (const q of PR) {
       // 捕获半径与渲染的袋口一致（0.85 倍袋口半径）：球心已经进入袋口
       // 范围就判落袋，避免看起来进袋了却被库边弹回。

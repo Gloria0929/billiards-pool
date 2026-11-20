@@ -266,6 +266,7 @@ function makePocket(table, geo, pocket, outer, materials, q8) {
     colours.push(shade, shade, shade)
   }
   cap.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colours, 3))
+
   if (q8) {
     const stitches = []
     function stitchPoint(i) {
@@ -469,11 +470,18 @@ function addRailSights(table, geo, railX, railY, material) {
 }
 
 function shadePlayingCloth(material, geo) {
+  const isSnk = geo.mode === 'snk'
   material.onBeforeCompile = (shader) => {
     shader.uniforms.clothHalfSize = { value: new THREE.Vector2(geo.W / 2, geo.H / 2) }
     shader.uniforms.clothPockets = { value: new THREE.Vector3(geo.PR[0][2] * 0.85, geo.PR[1][2] * 0.85, geo.py) }
     shader.uniforms.clothMark = { value: new THREE.Vector2(
-      toWorldX(geo, geo.mode === 'snk' ? BX : geo.W / 4), geo.mode === 'snk' ? DR : 0,
+      toWorldX(geo, isSnk ? BX : geo.W / 4), isSnk ? DR : 0,
+    ) }
+    shader.uniforms.clothSpots = { value: new THREE.Vector4(
+      0,
+      toWorldX(geo, geo.W * 0.75),
+      toWorldX(geo, geo.W - 324),
+      isSnk ? 1 : 0,
     ) }
     shader.vertexShader = `varying vec2 clothPosition;
 ${shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nclothPosition = position.xz;')}`
@@ -481,6 +489,7 @@ ${shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex
 uniform vec2 clothHalfSize;
 uniform vec3 clothPockets;
 uniform vec2 clothMark;
+uniform vec4 clothSpots;
 float clothHash(vec2 cell) {
   vec3 p = fract(vec3(cell.xyx) * 0.1031);
   p += dot(p, p.yzx + 33.33);
@@ -497,27 +506,73 @@ float chalkStroke(float distance, float pixelWidth) {
   float halfWidth = max(1.15, aa * 0.6);
   return 1.0 - smoothstep(halfWidth - aa * 0.5, halfWidth + aa * 0.5, abs(distance));
 }
+float spotDot(vec2 pos, vec2 center, float radius) {
+  float d = length(pos - center);
+  float aa = max(fwidth(d), 0.35);
+  return 1.0 - smoothstep(radius - aa, radius + aa, d);
+}
 ${shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
   vec2 clothEdge = clothHalfSize - abs(clothPosition);
-  float railShade = 0.32 * exp(-max(0.0, min(clothEdge.x, clothEdge.y)) / 19.0);
+  float railShade = 0.44 * exp(-max(0.0, min(clothEdge.x, clothEdge.y)) / 24.0);
+  // 转播级双排灯箱分布：台面中央明亮通透，四周自然压暗，叠加双排柔光亮带
+  vec2 clothRel = clothPosition / clothHalfSize;
+  float lampFalloff = 1.0 - 0.34 * smoothstep(0.14, 1.04, length(clothRel));
+  float bandDist = abs(abs(clothRel.y) - 0.36);
+  lampFalloff *= 0.92 + 0.18 * exp(-bandDist * bandDist * 13.0);
   float cornerDistance = length(clothEdge) - clothPockets.x;
   float sideDistance = length(vec2(clothPosition.x, clothEdge.y + clothPockets.z)) - clothPockets.y;
-  float lipShade = 0.17 * exp(-max(0.0, min(cornerDistance, sideDistance)) / 9.0);
-  float nap = 0.971 + 0.039 * clothNoise(clothPosition / vec2(310.0, 83.0))
-                    + 0.017 * clothNoise(clothPosition / vec2(71.0, 14.0));
-  diffuseColor.rgb *= (1.0 - railShade) * (1.0 - lipShade) * nap;
+  float lipShade = 0.28 * exp(-max(0.0, min(cornerDistance, sideDistance)) / 11.0);
+  // 远处用导数衰减高频噪声，避免斜视时出现摩尔纹
+  float fineFade = 1.0 - smoothstep(1.2, 3.2, fwidth(clothPosition.x) + fwidth(clothPosition.y));
+  float fineGrain = clothNoise(clothPosition / vec2(3.2, 3.2)) - 0.5;
+  float nap = 0.99 + fineGrain * 0.032 * fineFade;
+  // 绒毛掠射光泽：顺着视线看过去时台呢微微提亮，还原羊毛台呢丝绒感
+  float grazing = pow(1.0 - clamp(dot(normalize(vNormal), normalize(vViewPosition)), 0.0, 1.0), 1.65);
+  float warm = smoothstep(0.0, 1.0, 1.0 - length(clothPosition / clothHalfSize));
+  vec3 grade = mix(vec3(0.92, 0.975, 1.03), vec3(1.045, 1.015, 0.968), warm);
+  diffuseColor.rgb *= (1.0 - railShade) * (1.0 - lipShade) * lampFalloff * nap * grade
+    * (1.0 + grazing * 0.16);
 
   vec2 fromLine = clothPosition - vec2(clothMark.x, 0.0);
-  // Filter each signed distance in screen pixels so thin markings stay continuous
-  // when the cloth is viewed at a grazing angle.
   float mark = chalkStroke(fromLine.x, fwidth(fromLine.x));
   float arcDistance = length(fromLine) - clothMark.y;
   float arcMark = chalkStroke(arcDistance, fwidth(arcDistance));
   if (clothMark.y > 0.0 && fromLine.x < 0.0) {
     mark = max(mark, arcMark);
   }
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.51, 0.40), mark * 0.23);
-`)}`
+  // 斯诺克 6 个官方置球点（黑、粉、蓝、棕、绿、黄）
+  if (clothSpots.w > 0.5) {
+    float spots = 0.0;
+    spots = max(spots, spotDot(clothPosition, vec2(clothSpots.x, 0.0), 5.2));
+    spots = max(spots, spotDot(clothPosition, vec2(clothSpots.y, 0.0), 5.2));
+    spots = max(spots, spotDot(clothPosition, vec2(clothSpots.z, 0.0), 5.2));
+    spots = max(spots, spotDot(clothPosition, vec2(clothMark.x, 0.0), 4.6));
+    spots = max(spots, spotDot(clothPosition, vec2(clothMark.x, clothMark.y), 4.6));
+    spots = max(spots, spotDot(clothPosition, vec2(clothMark.x, -clothMark.y), 4.6));
+    mark = max(mark, spots * 1.15);
+  }
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.56, 0.65, 0.54), clamp(mark * 0.34, 0.0, 0.55));
+`)}
+`
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <normal_fragment_maps>',
+      `#include <normal_fragment_maps>
+  {
+    float detailFade = 1.0 - smoothstep(0.8, 2.4, fwidth(clothPosition.x) + fwidth(clothPosition.y));
+    vec2 fp = clothPosition / 1.6;
+    float h0 = clothNoise(fp);
+    float hx = clothNoise(fp + vec2(1.0, 0.0));
+    float hz = clothNoise(fp + vec2(0.0, 1.0));
+    vec2 grad = vec2(hx - h0, hz - h0) * 4.0 * detailFade;
+    vec3 fiberNormal = normalize((viewMatrix * vec4(normalize(vec3(-grad.x, 1.0, -grad.y)), 0.0)).xyz);
+    normal = normalize(normal + fiberNormal * 0.12);
+  }`,
+    )
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+  totalEmissiveRadiance += vec3(0.03, 0.052, 0.038) * grazing;`,
+    )
   }
 }
 
@@ -531,42 +586,45 @@ export function createTable(geo, maps) {
     new THREE.MeshStandardMaterial({ color: surfaceColor(color), roughness, metalness })
   const lacquer = new THREE.MeshPhysicalMaterial({
     map: maps.wood, normalMap: maps.woodNormal, normalScale: new THREE.Vector2(0.36, 0.36),
-    color: surfaceColor(0x8e655c), roughness: 0.29, clearcoat: 0.65,
-    clearcoatRoughness: 0.25, envMapIntensity: 0.54,
+    color: surfaceColor(q8 ? 0x8e655c : 0x6f3124), roughness: q8 ? 0.29 : 0.22,
+    clearcoat: q8 ? 0.65 : 0.85, clearcoatRoughness: q8 ? 0.25 : 0.16,
+    envMapIntensity: q8 ? 0.54 : 0.72,
   })
   const apron = new THREE.MeshStandardMaterial({
-    color: surfaceColor(0xa16b61), map: maps.wood, normalMap: maps.woodNormal,
-    normalScale: new THREE.Vector2(0.26, 0.26), roughness: 0.43, envMapIntensity: 0.41,
+    color: surfaceColor(q8 ? 0xa16b61 : 0x5c271d), map: maps.wood, normalMap: maps.woodNormal,
+    normalScale: new THREE.Vector2(0.26, 0.26), roughness: 0.38, envMapIntensity: 0.45,
   })
   const colors = {
     apron,
-    trim: material(q8 ? 0xc2a071 : 0x79523b, 0.32, q8 ? 0.68 : 0.13),
-    leg: material(q8 ? 0xaa8054 : 0x5e3529, 0.34, q8 ? 0.59 : 0.09),
+    trim: material(q8 ? 0xc2a071 : 0x8c633c, 0.3, q8 ? 0.68 : 0.45),
+    leg: material(q8 ? 0xaa8054 : 0x4c241b, 0.32, q8 ? 0.59 : 0.15),
     legInset: material(0x8e6847, 0.47, 0.43),
     legBevel: material(0xbb9063, 0.27, 0.59),
-    metal: material(q8 ? 0xc4a270 : 0x906a45, 0.27, 0.72),
+    metal: material(q8 ? 0xc4a270 : 0xcfa75e, q8 ? 0.27 : 0.22, q8 ? 0.72 : 0.86),
     leather: new THREE.MeshStandardMaterial({
-      color: surfaceColor(q8 ? 0xe7d5bc : 0x704a37), map: maps.leather,
+      color: surfaceColor(q8 ? 0xe7d5bc : 0x563222), map: maps.leather,
       normalMap: maps.leatherNormal, normalScale: new THREE.Vector2(0.55, 0.55),
-      roughness: 0.66, vertexColors: true,
+      roughness: 0.62, vertexColors: true,
     }),
     returnRail: material(0x373932, 0.33, 0.71),
     liner: new THREE.MeshStandardMaterial({
-      color: surfaceColor(0x382b21), normalMap: maps.leatherNormal, side: THREE.DoubleSide, roughness: 0.89,
+      color: surfaceColor(0x2e2118), normalMap: maps.leatherNormal, side: THREE.DoubleSide, roughness: 0.89,
     }),
     net: material(0xd9d0b9, 0.93),
     thread: material(0xf6e9d1, 0.91),
-    pocketDark: new THREE.MeshBasicMaterial({ color: surfaceColor(0x100d0b) }),
+    pocketDark: new THREE.MeshBasicMaterial({ color: surfaceColor(0x0b0908) }),
   }
   const cloth = new THREE.MeshPhysicalMaterial({
-    color: surfaceColor(0x284b3b), roughness: 0.97, bumpMap: maps.cloth, bumpScale: 0.47,
-    sheen: surfaceColor(0x202a24), reflectivity: 0.21, envMapIntensity: 0.23,
+    color: surfaceColor(q8 ? 0x16412b : 0x134b2e), roughness: 0.85, bumpMap: maps.cloth, bumpScale: 0.2,
+    clearcoat: 0.18, clearcoatRoughness: 0.8,
+    sheen: surfaceColor(0x284032), reflectivity: 0.22, envMapIntensity: 0.32,
   })
   const cushion = cloth.clone()
-  cushion.color = surfaceColor(0x284e3d)
+  cushion.color = surfaceColor(q8 ? 0x163f2b : 0x12472b)
   cushion.side = THREE.DoubleSide
+  cushion.bumpScale = 0.22
   const foldedCloth = cushion.clone()
-  foldedCloth.color.multiplyScalar(0.68)
+  foldedCloth.color.multiplyScalar(0.66)
   shadePlayingCloth(cloth, geo)
   makeBed(table, geo, cloth, foldedCloth)
   for (const outline of geo.cushions)
@@ -599,6 +657,33 @@ export function createTable(geo, maps) {
       const label = mesh(table, badgeGeometry, badge, -side * geo.W * 0.25, -13, side * (outer[1] + 0.8))
       if (side < 0) label.rotation.y = Math.PI
     }
+  } else {
+    // 斯诺克锦标赛黄铜铭牌
+    const plaque = texture(512, 96, (ctx) => {
+      const grad = ctx.createLinearGradient(0, 0, 512, 96)
+      grad.addColorStop(0, '#a88342')
+      grad.addColorStop(0.5, '#e2c27d')
+      grad.addColorStop(1, '#967236')
+      ctx.fillStyle = grad
+      ctx.fillRect(4, 8, 504, 80)
+      ctx.strokeStyle = '#3b2810'
+      ctx.lineWidth = 4
+      ctx.strokeRect(10, 14, 492, 68)
+      ctx.fillStyle = '#231708'
+      ctx.font = '700 30px Georgia, serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('CHAMPIONSHIP · 12FT', 256, 49)
+    })
+    plaque.encoding = THREE.sRGBEncoding
+    const plaqueMat = new THREE.MeshStandardMaterial({
+      map: plaque, roughness: 0.28, metalness: 0.72,
+    })
+    const plaqueGeo = new THREE.PlaneGeometry(260, 48)
+    for (const side of [-1, 1]) {
+      const plate = mesh(table, plaqueGeo, plaqueMat, 0, -14, side * (outer[1] + 0.9))
+      if (side < 0) plate.rotation.y = Math.PI
+    }
   }
   table.traverse((part) => {
     if (!part.isMesh || part.material.transparent) return
@@ -610,18 +695,23 @@ export function createTable(geo, maps) {
 
 export function createTableEnvironment(renderer) {
   const room = new THREE.Scene()
-  room.background = surfaceColor(0x494646)
+  room.background = surfaceColor(0x1b1e21)
   function softbox(width, height, color, intensity, x, y, z) {
     const light = mesh(room, new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({
       color: surfaceColor(color).multiplyScalar(intensity), side: THREE.DoubleSide,
     }), x, y, z)
     light.lookAt(0, 0, 0)
   }
-  softbox(8, 2.5, 0xfff5df, 3.1, 0, 6, 0)
-  softbox(7, 1.4, 0xe5eef9, 1.35, 2, 1.7, 6)
-  softbox(4, 3.2, 0xffd2a3, 1.45, -5, 0.8, -2)
+  // 克鲁斯堡双排转播柔光灯带：在树脂球面上映射出锐利的双条职业高光
+  softbox(12, 0.95, 0xfff5e0, 5.6, 0, 6.2, -1.85)
+  softbox(12, 0.95, 0xfff5e0, 5.6, 0, 6.2, 1.85)
+  // 中央柔光漫反射补充
+  softbox(10, 2.2, 0xf4f0e4, 1.4, 0, 7.2, 0)
+  // 四周微弱的赛场冷暖环境轮廓反射
+  softbox(7.5, 1.4, 0xcadff5, 1.05, 2.5, 1.6, 6.4)
+  softbox(5.0, 2.4, 0xffd09c, 1.05, -5.8, 0.9, -2.4)
   const pmrem = new THREE.PMREMGenerator(renderer)
-  const environment = pmrem.fromScene(room, 0.08, 0.1, 32)
+  const environment = pmrem.fromScene(room, 0.06, 0.1, 32)
   pmrem.dispose()
   for (const light of room.children) {
     light.geometry.dispose()

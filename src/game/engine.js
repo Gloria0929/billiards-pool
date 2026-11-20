@@ -48,13 +48,15 @@ export class BilliardsEngine {
     this.simTime = 0
     this.last = performance.now()
     this.view = 'orbit'
+    this.peekingTop = false
     this.orbitYaw = 0.45
     this.orbitPitch = 0.50
     this.orbitZoom = 1
-    this.camH = 270
-    this.camD = 560
+    this.camH = 215
+    this.camD = 490
     this.cueTh = 0.07
     this.cameraReady = false
+    this.pulseClock = 0
     this.showGuide = true
     this.guideMode = 'simple'
     this.power = 0.45
@@ -114,30 +116,37 @@ export class BilliardsEngine {
     const rd = this.renderer
     rd.outputEncoding = THREE.sRGBEncoding
     rd.toneMapping = THREE.ACESFilmicToneMapping
-    rd.toneMappingExposure = 1
+    rd.toneMappingExposure = 1.06
     rd.shadowMap.enabled = this.quality.shadows
-    rd.shadowMap.type = THREE.VSMShadowMap
+    rd.shadowMap.type = THREE.PCFSoftShadowMap
     rd.shadowMap.autoUpdate = false
     this.tableMaps = loadTableMaps(Math.min(this.quality.anisotropy, rd.capabilities.getMaxAnisotropy()))
     this.tableMapTextures = new Set(Object.values(this.tableMaps))
     this.scene = new THREE.Scene()
-    this.scene.background = surfaceColor(0x141917)
-    this.scene.fog = new THREE.Fog(this.scene.background, 5800, 17600)
-    this.cam = new THREE.PerspectiveCamera(50, 1, 10, 12000)
+    this.scene.background = surfaceColor(0x060809)
+    this.scene.fog = new THREE.Fog(this.scene.background, 4200, 14500)
+    this.cam = new THREE.PerspectiveCamera(46, 1, 10, 12000)
     this.tableEnvironment = createTableEnvironment(rd)
     this.scene.environment = this.tableEnvironment.texture
-    this.scene.add(new THREE.HemisphereLight(0xe8eef2, 0x836f5a, 0.68))
-    this.sun = new THREE.SpotLight(0xffefd9, 1.95, 6300, 0.82, 0.74, 1)
+    this.scene.add(new THREE.HemisphereLight(0xd8e6f4, 0x3a2e25, 0.34))
+    this.sun = new THREE.SpotLight(0xfff3e0, 2.28, 6800, 0.86, 0.82, 1)
     this.sun.castShadow = true
-    this.sun.shadow.mapSize.set(1536, 1536)
-    this.sun.shadow.radius = 8
-    this.sun.shadow.normalBias = 2.3
+    this.sun.shadow.mapSize.set(1024, 1024)
+    this.sun.shadow.radius = 4
+    this.sun.shadow.normalBias = 2.1
     this.sun.shadow.bias = -0.00022
     this.sun.shadow.camera.near = 1050
     this.scene.add(this.sun, this.sun.target)
-    const fill = new THREE.DirectionalLight(0xd1dfed, 0.37)
+    const fill = new THREE.DirectionalLight(0xc2d9f2, 0.24)
     fill.position.set(1400, 1150, -1450)
     this.scene.add(fill)
+
+    // 侧向暖光：斜射照亮台呢与红木库边，勾勒立体轮廓
+    this.rimLight = new THREE.DirectionalLight(0xffcf99, 0.44)
+    this.rimLight.position.set(-1650, 760, -1500)
+    this.scene.add(this.rimLight)
+
+    // 台面上方两条长条柔光：球面出现长条高光，台面形成中间略暗的灯带。
 
     this.bg = new THREE.Group()
     this.scene.add(this.bg)
@@ -153,8 +162,9 @@ export class BilliardsEngine {
       c.width = c.height = 128
       const x = c.getContext('2d')
       const g = x.createRadialGradient(64, 64, 0, 64, 64, 64)
-      g.addColorStop(0, 'rgba(0,0,0,.6)')
-      g.addColorStop(0.4, 'rgba(0,0,0,.4)')
+      g.addColorStop(0, 'rgba(0,0,0,.78)')
+      g.addColorStop(0.28, 'rgba(0,0,0,.52)')
+      g.addColorStop(0.58, 'rgba(0,0,0,.2)')
       g.addColorStop(1, 'rgba(0,0,0,0)')
       x.fillStyle = g
       x.fillRect(0, 0, 128, 128)
@@ -191,8 +201,8 @@ export class BilliardsEngine {
     this.aimGroup = new THREE.Group()
     const guideLine = (color, dashed = false) => {
       const material = new LineMaterial({
-        color: surfaceColor(color), transparent: true, opacity: 0.91, toneMapped: false,
-        linewidth: dashed ? 1.5 : 1.8, dashSize: 22, gapSize: 14,
+        color: surfaceColor(color), transparent: true, opacity: 0.74, toneMapped: false,
+        linewidth: dashed ? 1.4 : 1.5, dashSize: 22, gapSize: 14,
       })
       if (dashed) material.defines.USE_DASH = ''
       const m = new Line2(new LineGeometry(), material)
@@ -201,21 +211,21 @@ export class BilliardsEngine {
       this.aimGroup.add(m)
       return m
     }
-    this.lineA = guideLine(0xffffff)
-    this.lineB = guideLine(0xffe38a)
-    this.lineC = guideLine(0xffffff)
+    this.lineA = guideLine(0xf4ecdb)
+    this.lineB = guideLine(0xe8c98f)
+    this.lineC = guideLine(0xece4d3)
     this.ghost = new THREE.Mesh(
       new THREE.SphereGeometry(1, 16, 12),
       new THREE.MeshBasicMaterial({
-        color: 0xffffff,
+        color: 0xf6efe0,
         transparent: true,
-        opacity: 0.4,
+        opacity: 0.32,
       }),
     )
     this.aimGroup.add(this.ghost)
 
-    this.bankCueLine = guideLine(0x8fd6ff, true)
-    this.bankObjectLine = guideLine(0xffd479, true)
+    this.bankCueLine = guideLine(0x9cc6e4, true)
+    this.bankObjectLine = guideLine(0xe6c184, true)
 
     const pocketRing = new THREE.RingGeometry(0.72, 1, 36)
     const pocketMark = (color) => {
@@ -253,40 +263,44 @@ export class BilliardsEngine {
 
   // 九球专用球面：比黑八那套更亮的电视配色，号码用细圈 + 数字，不加大白圆贴。
   nineBallTexture(n) {
+    const W = 1024
+    const H = 512
     const c = document.createElement('canvas')
-    c.width = 512
-    c.height = 256
+    c.width = W
+    c.height = H
     const x = c.getContext('2d')
     if (n > 8) {
       x.fillStyle = '#f5f1e4'
-      x.fillRect(0, 0, 512, 256)
+      x.fillRect(0, 0, W, H)
       x.fillStyle = NINE_COL[n - 8]
-      x.fillRect(0, 52, 512, 152)
+      x.fillRect(0, 104, W, 304)
     } else {
       x.fillStyle = NINE_COL[n]
-      x.fillRect(0, 0, 512, 256)
+      x.fillRect(0, 0, W, H)
     }
     if (n > 0) {
       const ink = n === 1 || n === 5 || n === 9 ? '#1a160e' : '#f8f5ec'
-      for (const u of [128, 384]) {
+      for (const u of [W / 4, (W * 3) / 4]) {
         x.globalAlpha = 0.55
         x.strokeStyle = ink
-        x.lineWidth = 2.6
+        x.lineWidth = 5.2
         x.beginPath()
-        x.arc(u, 128, 42, 0, Math.PI * 2)
+        x.arc(u, H / 2, 84, 0, Math.PI * 2)
         x.stroke()
         x.globalAlpha = 1
         x.fillStyle = ink
-        x.font = '600 60px "Helvetica Neue", Helvetica, Arial, sans-serif'
+        x.font = '600 120px "Helvetica Neue", Helvetica, Arial, sans-serif'
         x.textAlign = 'center'
         x.textBaseline = 'middle'
-        x.fillText(n, u, 132)
+        x.fillText(n, u, H / 2 + 8)
       }
     }
     const map = new THREE.CanvasTexture(c)
     map.encoding = THREE.sRGBEncoding
+    map.anisotropy = this.quality?.anisotropy ?? 8
     return map
   }
+
 
   ballTexture(n) {
     const c = document.createElement('canvas')
@@ -363,7 +377,7 @@ export class BilliardsEngine {
     this.scene.add(this.tg)
     const [railX, railY] = tableMargins(this.geo)
     this.tableShadow.scale.set((W + railX * 2) * 1.48, 1, (H + railY * 2) * 1.72)
-    this.sun.position.set(-350, this.geo.mode === 'snk' ? 2800 : 2420, 340)
+    this.sun.position.set(-280, this.geo.mode === 'snk' ? 2760 : 2380, 260)
     this.renderer.shadowMap.needsUpdate = true
   }
 
@@ -374,17 +388,19 @@ export class BilliardsEngine {
         ? { map: this.nineBallTexture(n) }
         : geo.mode !== 'snk' || n === 0
           ? { map: this.ballTexture(n) }
-          : { color: surfaceColor(n <= 15 ? 0xc0161b : SC[n - 16]) }
+          : { color: surfaceColor(n <= 15 ? 0xc41219 : SC[n - 16]) }
+    const isNine = geo.mode === 'nine'
     const material = new THREE.MeshPhysicalMaterial({
       ...surface,
-      // 九球弱化高光，让球色更实、更容易区分；中八保持原来的亮面。
-      roughness: geo.mode === 'nine' ? 0.3 : 0.19,
-      clearcoat: geo.mode === 'nine' ? 0.5 : 0.88,
-      clearcoatRoughness: geo.mode === 'nine' ? 0.28 : 0.15,
-      envMapIntensity: geo.mode === 'nine' ? 0.48 : 0.66,
+      // 斯诺克与中八使用高光泽酚醛树脂质感（Aramith）；九球保持适度高光便于读号
+      roughness: isNine ? 0.24 : 0.13,
+      clearcoat: isNine ? 0.62 : 0.96,
+      clearcoatRoughness: isNine ? 0.24 : 0.08,
+      envMapIntensity: isNine ? 0.56 : 0.92,
     })
     const mesh = new THREE.Mesh(this.sg, material)
-    mesh.castShadow = this.quality?.dynamicShadows ?? true
+    // 每颗球底部已有独立高精度接触阴影（blobMat），关闭动态阴影投射可彻底消除运动时逐帧重绘 ShadowMap 的掉帧
+    mesh.castShadow = false
     mesh.receiveShadow = true
     this.bg.add(mesh)
     const shadow = new THREE.Mesh(this.blobGeo, this.blobMat)
@@ -435,8 +451,9 @@ export class BilliardsEngine {
     this.setSpin(this.playerSpin, false)
     this.angle = 0
     this.orbitZoom = 1
-    this.camH = 270
-    this.camD = 560
+    this.camH = 215
+    this.camD = 490
+    this.peekingTop = false
     this.cameraReady = false
     this.resize()
     audio.rollSound(0)
@@ -493,16 +510,22 @@ export class BilliardsEngine {
 
   /* ---------- 相机 ---------- */
   setView(next) {
+    this.peekingTop = false
     this.view = next
     this.onView?.(next)
   }
 
+  setPeekTop(active) {
+    this.peekingTop = !!active
+  }
+
   resetView() {
+    this.peekingTop = false
     this.orbitYaw = 0.45
     this.orbitPitch = 0.50
     this.orbitZoom = 1
-    this.camH = 270
-    this.camD = 560
+    this.camH = 215
+    this.camD = 490
   }
 
   zoomView(delta) {
@@ -531,40 +554,54 @@ export class BilliardsEngine {
     desired.aspect = this.cam.aspect
     desired.near = 8
     desired.far = 40000
+    const activeView = this.peekingTop ? 'top' : this.view
+    const cueBall = this.state.balls[0]
     const c =
-      this.view === 'fp' && this.animating && this.state.shotAnchor
+      activeView === 'fp' && this.animating && this.state.shotAnchor
         ? this.state.shotAnchor
-        : this.state.balls[0]
+        : cueBall
     const dx = Math.cos(this.angle)
     const dy = Math.sin(this.angle)
-    if (this.view === 'fp') {
-      desired.fov = 52
+    if (activeView === 'fp') {
+      desired.fov = 46
       desired.up.set(0, 1, 0)
+      const followLift = this.animating ? 155 : 0
+      const followBack = this.animating ? 110 : 0
       desired.position.set(
-        toWorldX(this.geo, c.x) - dx * this.camD,
-        Math.max(this.camH, R + this.camD * Math.tan(this.cueTh) + 80),
-        toWorldZ(this.geo, c.y) + dy * this.camD,
+        toWorldX(this.geo, c.x) - dx * (this.camD + followBack),
+        Math.max(this.camH + followLift, R + this.camD * Math.tan(this.cueTh) + 75 + followLift * 0.5),
+        toWorldZ(this.geo, c.y) + dy * (this.camD + followBack),
       )
-      this.cameraTarget.set(
-        toWorldX(this.geo, c.x) + dx * 620,
-        R,
-        toWorldZ(this.geo, c.y) - dy * 620,
-      )
-    } else if (this.view === 'top') {
+      if (this.animating && cueBall.on) {
+        // Snooker 19 风格动态追踪：出杆后平滑抬升并柔和跟随主球走势
+        this.cameraTarget.set(
+          toWorldX(this.geo, c.x * 0.45 + cueBall.x * 0.55) + dx * 280,
+          R,
+          toWorldZ(this.geo, c.y * 0.45 + cueBall.y * 0.55) - dy * 280,
+        )
+      } else {
+        this.cameraTarget.set(
+          toWorldX(this.geo, c.x) + dx * 680,
+          R,
+          toWorldZ(this.geo, c.y) - dy * 680,
+        )
+      }
+    } else if (activeView === 'top') {
       desired.fov = 24
       const portrait = this.cam.aspect < 1
       const tf = Math.tan((24 * Math.PI) / 360)
       const hw = (portrait ? H : W) / 2 + 180
       const hh = (portrait ? W : H) / 2 + 180
       desired.up.set(portrait ? 1 : 0, 0, portrait ? 0 : -1)
+      // 为顶部计分板与左侧竖排操控栏留出安全边距，确保 6 个袋口完全无遮挡
       desired.position.set(
         0,
-        Math.max(hh / tf, hw / (tf * this.cam.aspect)) * 1.09,
+        Math.max((hh * 1.18) / tf, (hw * 1.15) / (tf * this.cam.aspect)),
         0,
       )
       this.cameraTarget.set(0, 0, 0)
     } else {
-      desired.fov = 42
+      desired.fov = 35
       const portrait = this.cam.aspect < 1
       const yaw = this.orbitYaw + (portrait ? Math.PI / 2 : 0)
       const direction = V3(
@@ -657,12 +694,6 @@ export class BilliardsEngine {
       entry.shadow.scale.setScalar(2.7 * R)
     }
     const cue = state.balls[0]
-    if ((this.quality?.dynamicShadows ?? true) &&
-        (this.animating || this.drag || this.shadowCueX !== cue.x || this.shadowCueY !== cue.y)) {
-      this.renderer.shadowMap.needsUpdate = true
-      this.shadowCueX = cue.x
-      this.shadowCueY = cue.y
-    }
 
     const dragging = this.drag && state.phase === 'aim'
     const showCue = state.phase === 'aim' && cue.on && !dragging
@@ -691,7 +722,7 @@ export class BilliardsEngine {
         }
       }
       const strike = this.strikeProgress
-      const gap = 3 + (11 + this.power * 260) * (1 - strike * strike)
+      const gap = 3 + (11 + this.power * 260) * (1 - strike * strike) - strike * strike * 16
       const th = this.cueTilt(cue, dx, dy)
       const axis = V3(dx * Math.cos(th), -Math.sin(th), -dy * Math.cos(th))
       const contact = P(cue.x, cue.y)
@@ -706,6 +737,13 @@ export class BilliardsEngine {
       this.cueGroup.position.copy(contact).addScaledVector(axis, -gap)
       this.cueGroup.quaternion.setFromUnitVectors(Y_AXIS, axis)
       this.cueTh = th
+    }
+
+    // 进袋光环柔和呼吸高亮
+    this.pulseClock += dt
+    if (this.objectPocketMark?.visible) {
+      const pulse = 0.72 + 0.28 * Math.sin(this.pulseClock * 5.2)
+      this.objectPocketMark.material.opacity = pulse
     }
 
     this.updCam(dt)
@@ -917,9 +955,8 @@ export class BilliardsEngine {
     window.addEventListener('blur', this.onBlur)
 
     this.onKeyUp = (e) => {
-      if (e.code === 'Space' && this.space) {
-        e.preventDefault()
-        this.releaseSpace(false)
+      if (e.key.toLowerCase() === 't' && this.peekingTop) {
+        this.setPeekTop(false)
       }
     }
     document.addEventListener('keyup', this.onKeyUp)
@@ -929,6 +966,7 @@ export class BilliardsEngine {
       if (e.key === 'Escape') {
         this.cancelSpace(true)
         this.endPull(null, true)
+        this.setPeekTop(false)
         return
       }
       if (e.target.matches?.('input')) return
@@ -936,7 +974,7 @@ export class BilliardsEngine {
         return
       if (e.code === 'Space') {
         e.preventDefault()
-        if (!e.repeat) this.pressSpace()
+        if (!e.repeat) this.shoot()
       }
       if (
         this.interactionEnabled &&
@@ -946,8 +984,19 @@ export class BilliardsEngine {
         e.preventDefault()
         this.rotateAim((e.key === 'ArrowLeft' ? 1 : -1) * (e.shiftKey ? AIM_NUDGE_FINE : AIM_NUDGE))
       }
+      if (
+        this.interactionEnabled &&
+        this.state?.phase === 'aim' &&
+        (e.key === 'ArrowUp' || e.key === 'ArrowDown')
+      ) {
+        e.preventDefault()
+        const step = e.shiftKey ? 0.01 : 0.02
+        this.setPower(this.power + (e.key === 'ArrowUp' ? step : -step))
+      }
       if (this.interactionEnabled && e.key.toLowerCase() === 'v')
         this.setView({ top: 'orbit', orbit: 'fp', fp: 'top' }[this.view])
+      if (this.interactionEnabled && e.key.toLowerCase() === 't' && !e.repeat && this.view !== 'top')
+        this.setPeekTop(true)
     }
     document.addEventListener('keydown', this.onKeyDown)
 
@@ -1067,8 +1116,10 @@ export class BilliardsEngine {
           this.orbitPitch = Math.max(0.38, Math.min(1.38, this.orbitPitch + dy * 0.005))
         }
       } else if (this.view === 'fp' && this.state.phase === 'aim') {
-        this.angle -= dx * 0.0025
-        this.camH = Math.max(100, Math.min(850, this.camH - dy * 1.1))
+        // 按住 Shift 进入超精细微调（1/5 灵敏度），精准瞄准远台薄球
+        const sensitivity = e.shiftKey ? 0.0005 : 0.0022
+        this.angle -= dx * sensitivity
+        this.camH = Math.max(95, Math.min(850, this.camH - dy * 1.05))
       }
     }
     this.lastX = e.clientX
@@ -1161,9 +1212,10 @@ export class BilliardsEngine {
 
   movePull(e) {
     if (!this.pull || e.pointerId !== this.pull.id) return
+    // 拉长右键后拽的满力行程，让轻推与中力区间更好控制
     const full = Math.max(
-      160,
-      Math.min(320, Math.min(this.canvas.clientWidth, this.canvas.clientHeight) * 0.4),
+      240,
+      Math.min(420, Math.min(this.canvas.clientWidth, this.canvas.clientHeight) * 0.55),
     )
     this.pull.d =
       (e.clientX - this.pull.x) * this.pull.k.x +
@@ -1204,19 +1256,7 @@ export class BilliardsEngine {
     if (!cancel && this.state?.phase === 'aim') this.shoot()
   }
 
-  chargeTick(dt) {
-    if (!this.space) return
-    if (this.state?.phase !== 'aim') {
-      this.space = null
-      this.onCharge?.(false)
-      return
-    }
-    this.space.t += dt
-    if (this.space.t > 0.22) {
-      const u = ((this.space.t - 0.22) / 1.5) % 2
-      this.setPower(0.03 + 0.97 * (u < 1 ? u : 2 - u), false)
-    }
-  }
+  chargeTick() {}
 
   shoot() {
     if (!this.acceptsInput() || !this.state || this.striking) return

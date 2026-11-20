@@ -28,12 +28,12 @@ const groupLabel = computed(() => {
 </script>
 
 <template>
-  <div class="pl" :class="{ on: active }">
+  <div class="pl" :class="{ on: active, 'pl-right': seat === 1 }">
     <span class="pl-dot" aria-hidden="true"></span>
     <span class="pl-name">{{ label }}<em v-if="tag" class="pl-tag">{{ tag }}</em></span>
     <span v-if="mode !== 'nine'" class="pl-meta">
       <template v-if="mode === 'snk'">
-        <b class="pl-score">{{ score }}</b><span>分</span>
+        <b class="pl-score">{{ score }}</b>
       </template>
       <template v-else>
         <span class="pl-group">{{ groupLabel }}</span>

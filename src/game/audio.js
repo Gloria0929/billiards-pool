@@ -187,6 +187,43 @@ export function rollSound(speed) {
   )
 }
 
+// 克鲁斯堡剧场柔和掌声（轻量合成，不增加额外音频体积）
+export function playApplause(strength = 0.6) {
+  if (!AC || AC.state !== 'running' || muted || !volume || !noiseBuffer) return
+  const now = AC.currentTime
+  const duration = 1.6 + strength * 1.4
+  const bursts = Math.round(6 + strength * 6)
+  for (let i = 0; i < bursts; i++) {
+    const start = now + i * 0.09 + Math.random() * 0.06
+    const src = AC.createBufferSource()
+    src.buffer = noiseBuffer
+    src.loop = true
+    const band = AC.createBiquadFilter()
+    band.type = 'bandpass'
+    band.frequency.value = 1150 + Math.random() * 1400
+    band.Q.value = 1.6 + Math.random() * 1.2
+    const gain = AC.createGain()
+    const peak = (0.018 + strength * 0.028) * (0.7 + Math.random() * 0.5)
+    gain.gain.setValueAtTime(0.0001, start)
+    gain.gain.linearRampToValueAtTime(peak, start + 0.14 + Math.random() * 0.12)
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration * (0.55 + Math.random() * 0.45))
+    const panner = AC.createStereoPanner()
+    panner.pan.value = (Math.random() - 0.5) * 1.3
+    src.connect(band)
+    band.connect(gain)
+    gain.connect(panner)
+    panner.connect(master)
+    src.start(start)
+    src.stop(start + duration + 0.1)
+    src.onended = () => {
+      src.disconnect()
+      band.disconnect()
+      gain.disconnect()
+      panner.disconnect()
+    }
+  }
+}
+
 export function silence() {
   rollSound(0)
   if (master && AC) master.gain.setTargetAtTime(0, AC.currentTime, 0.02)

@@ -14,6 +14,32 @@ const onlineOpen = ref(false);
 const popEl = ref(null);
 const triggerEl = ref(null);
 
+const SNOOKER_COLORS = [
+  { name: "黄球", hex: "#e8c41c" },
+  { name: "绿球", hex: "#148744" },
+  { name: "棕球", hex: "#7c4524" },
+  { name: "蓝球", hex: "#1f5cc8" },
+  { name: "粉球", hex: "#ee88ac" },
+  { name: "黑球", hex: "#1d1e20" },
+];
+
+const snookerTarget = computed(() => {
+  if (props.ui.mode !== "snk") return null;
+  if (props.ui.snookerOnRed) return { label: "红球", hex: "#c81820" };
+  if (props.ui.snookerFinalColor) {
+    const c = SNOOKER_COLORS[props.ui.snookerColorIndex] || SNOOKER_COLORS[5];
+    return { label: c.name, hex: c.hex };
+  }
+  return {
+    label: "彩球",
+    hex: "conic-gradient(#e8c41c 0 60deg, #148744 60deg 120deg, #7c4524 120deg 180deg, #1f5cc8 180deg 240deg, #ee88ac 240deg 300deg, #222 300deg)",
+  };
+});
+
+const snookerDiff = computed(() =>
+  Math.abs((props.ui.scores?.[0] ?? 0) - (props.ui.scores?.[1] ?? 0)),
+);
+
 const onlineActive = computed(
   () =>
     props.ui.online.status === "room" || props.ui.online.status === "playing",
@@ -102,97 +128,147 @@ onBeforeUnmount(() =>
 
 <template>
   <header id="hud" :inert="ui.menu.visible">
-    <div class="brand">
-      <span class="brand-mark">8</span>
-      <div>
-        <div class="brand-name">真实台球</div>
-        <small id="mode-label">{{ ui.modeLabel }}</small>
+    <div class="hud-top">
+      <div class="brand">
+        <span class="brand-mark">8</span>
+        <div>
+          <div class="brand-name">真实台球</div>
+          <small id="mode-label">{{ ui.modeLabel }}</small>
+        </div>
+      </div>
+
+      <div class="scoreboard">
+        <PlayerCard
+          :seat="0"
+          :label="displayName(0)"
+          :tag="tagFor(0)"
+          :active="ui.phase !== 'over' && ui.turn === 0"
+          :mode="ui.mode"
+          :group="ui.groups[0]"
+          :score="ui.scores[0]"
+          :balls="ui.balls"
+        />
+
+        <div class="score-center">
+          <div
+            v-if="ui.match && ui.match.bestOf > 1"
+            class="hud-match"
+            :title="formatLabel(ui.match.bestOf)"
+          >
+            <small>第 {{ ui.match.frame }} 局</small>
+            <b>{{ ui.match.wins[0] }} : {{ ui.match.wins[1] }}</b>
+          </div>
+          <div
+            v-else-if="ui.mode === 'nine' && ui.phase !== 'over'"
+            class="hud-target"
+            title="九球：每杆先碰台面最小号球，合法打进 9 号球获胜"
+          >
+            <small>目标</small>
+            <BallChip :n="ui.nineTarget || 1" :on="true" />
+            <span>剩 {{ ui.nineRemaining }}</span>
+          </div>
+          <span v-else class="score-vs">VS</span>
+        </div>
+
+        <PlayerCard
+          :seat="1"
+          :label="displayName(1)"
+          :tag="tagFor(1)"
+          :active="ui.phase !== 'over' && ui.turn === 1"
+          :mode="ui.mode"
+          :group="ui.groups[1]"
+          :score="ui.scores[1]"
+          :balls="ui.balls"
+        />
+      </div>
+
+      <div class="hud-actions">
+        <nav class="viewbar viewbar-inline" aria-label="选择视角">
+          <button
+            v-for="item in views"
+            :key="item.id"
+            :data-view="item.id"
+            :aria-pressed="ui.view === item.id"
+            :disabled="watching"
+            :title="watching ? '正在观看对手视角' : ''"
+            @click="actions.setView(item.id)"
+          >
+            {{ item.label }}
+          </button>
+        </nav>
+        <button v-if="ui.canRequestStalemate" @click="actions.requestStalemate">
+          重摆
+        </button>
+        <button
+          v-if="ui.mode === 'snk' && ui.phase !== 'over'"
+          id="concede"
+          :disabled="!ui.canConcede"
+          :title="
+            ui.canConcede
+              ? '本局认输'
+              : '轮到你击球且已有一方需要罚分追分时才能认输'
+          "
+          @click="actions.openConcedeConfirm"
+        >
+          认输
+        </button>
+        <button
+          id="settings-toggle"
+          :aria-expanded="ui.settingsOpen"
+          aria-controls="settings-panel"
+          @click="toggleSettings"
+        >
+          设置
+        </button>
+        <button v-if="onlineActive" ref="triggerEl" @click="toggleOnline">
+          联机
+        </button>
+        <button v-else id="nb" @click="actions.openMenu">退出</button>
+        <SettingsPanel v-if="ui.settingsOpen" :ui="ui" :actions="actions" />
       </div>
     </div>
-    <PlayerCard
-      v-for="seat in [0, 1]"
-      :key="seat"
-      :seat="seat"
-      :label="displayName(seat)"
-      :tag="tagFor(seat)"
-      :active="ui.phase !== 'over' && ui.turn === seat"
-      :mode="ui.mode"
-      :group="ui.groups[seat]"
-      :score="ui.scores[seat]"
-      :balls="ui.balls"
-    />
-    <div
-      v-if="ui.mode === 'snk' && ui.phase !== 'over'"
-      class="hud-remaining"
-      title="台面理论最高可得分数：每颗红球按红+黑计，彩球按面值计"
-    >
-      <small>台面最高分</small>
-      <b>{{ ui.snookerRemaining }}</b>
-    </div>
-    <div
-      v-if="ui.mode === 'nine' && ui.phase !== 'over'"
-      class="hud-target"
-      title="九球：每杆先碰台面最小号球，合法打进 9 号球获胜"
-    >
-      <small>目标</small>
-      <BallChip :n="ui.nineTarget || 1" :on="true" />
-      <span>剩 {{ ui.nineRemaining }} 颗</span>
-    </div>
-    <div
-      v-if="ui.match && ui.match.bestOf > 1"
-      class="hud-match"
-      :title="formatLabel(ui.match.bestOf)"
-    >
-      <small>第 {{ ui.match.frame }} 局</small>
-      <b>{{ ui.match.wins[0] }} : {{ ui.match.wins[1] }}</b>
-    </div>
-    <div class="hud-actions">
-      <nav class="viewbar viewbar-inline" aria-label="选择视角">
-        <button
-          v-for="item in views"
-          :key="item.id"
-          :data-view="item.id"
-          :aria-pressed="ui.view === item.id"
-          :disabled="watching"
-          :title="watching ? '正在观看对手视角' : ''"
-          @click="actions.setView(item.id)"
-        >
-          {{ item.label }}
-        </button>
-      </nav>
-      <button v-if="ui.canRequestStalemate" @click="actions.requestStalemate">
-        重摆
-      </button>
-      <button
+
+    <div class="hud-sub">
+      <div
         v-if="ui.mode === 'snk' && ui.phase !== 'over'"
-        id="concede"
-        :disabled="!ui.canConcede"
-        :title="
-          ui.canConcede
-            ? '本局认输'
-            : '轮到你击球且已有一方需要罚分追分时才能认输'
-        "
-        @click="actions.openConcedeConfirm"
+        class="hud-snooker-bar"
       >
-        认输
-      </button>
-      <button
-        id="settings-toggle"
-        :aria-expanded="ui.settingsOpen"
-        aria-controls="settings-panel"
-        @click="toggleSettings"
+        <div
+          v-if="ui.snookerBreak > 0"
+          class="hud-break"
+          title="当前连续得分（单杆）"
+        >
+          <small>单杆</small>
+          <b>{{ ui.snookerBreak }}</b>
+        </div>
+        <div
+          v-if="snookerTarget"
+          class="hud-snk-target"
+          :title="`当前目标球：${snookerTarget.label}`"
+        >
+          <i class="snk-dot" :style="{ background: snookerTarget.hex }"></i>
+          <span>{{ snookerTarget.label }}</span>
+        </div>
+        <div
+          class="hud-remaining"
+          title="台面理论最高可得分数与当前分差"
+        >
+          <small>剩分</small>
+          <b>{{ ui.snookerRemaining }}</b>
+          <em v-if="snookerDiff > 0" class="hud-diff">差 {{ snookerDiff }}</em>
+        </div>
+      </div>
+
+      <div
+        v-if="turnNote || ui.message"
+        id="msg"
+        role="status"
+        aria-live="polite"
       >
-        设置
-      </button>
-      <button v-if="onlineActive" ref="triggerEl" @click="toggleOnline">
-        联机
-      </button>
-      <button v-else id="nb" @click="actions.openMenu">退出游戏</button>
-      <SettingsPanel v-if="ui.settingsOpen" :ui="ui" :actions="actions" />
+        {{ turnNote || ui.message }}
+      </div>
     </div>
-    <div id="msg" role="status" aria-live="polite">
-      {{ turnNote || ui.message }}
-    </div>
+
     <div v-if="onlineOpen" ref="popEl" class="online-pop">
       <h4>联机房间</h4>
       <p>
@@ -204,7 +280,9 @@ onBeforeUnmount(() =>
         }}
       </p>
       <p>辅助线：{{ ui.online.guide ? "开" : "关" }}</p>
-      <button @click="leaveRoom">{{ ui.online.status === "playing" ? "暂离房间" : "离开房间" }}</button>
+      <button @click="leaveRoom">
+        {{ ui.online.status === "playing" ? "暂离房间" : "离开房间" }}
+      </button>
     </div>
   </header>
 </template>

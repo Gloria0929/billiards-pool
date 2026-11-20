@@ -9,6 +9,14 @@ const props = defineProps({
 
 const powerPercent = computed(() => Math.round(props.ui.power * 100))
 
+const powerTone = computed(() => {
+  const p = powerPercent.value
+  if (p <= 25) return '轻推'
+  if (p <= 55) return '走位'
+  if (p <= 80) return '发力'
+  return '强攻'
+})
+
 const watching = computed(
   () =>
     props.ui.online.status === 'playing' &&
@@ -19,18 +27,33 @@ const watching = computed(
 </script>
 
 <template>
-  <main id="wrap" :inert="ui.menu.visible">
+  <main id="wrap" :class="`view-${ui.view}`" :inert="ui.menu.visible">
     <canvas
       id="cv"
       aria-label="3D 台球桌，点击台面瞄准"
       :ref="(el) => { if (el) setCanvas(el) }"
     ></canvas>
     <div id="pbar" v-if="ui.charging">
-      <span>力度</span>
-      <i><u :style="{ width: powerPercent + '%' }"></u></i>
+      <span class="pbar-tag">{{ powerTone }}</span>
+      <i>
+        <u :style="{ width: powerPercent + '%' }"></u>
+        <em class="pbar-ticks" aria-hidden="true"><span></span><span></span><span></span></em>
+      </i>
       <b>{{ powerPercent }}%</b>
     </div>
     <div id="view-tools">
+      <button
+        v-if="ui.view !== 'top'"
+        class="peek-btn"
+        title="按住临时俯瞰全局（快捷键 T）"
+        :disabled="watching"
+        @pointerdown.prevent="actions.setPeekTop(true)"
+        @pointerup="actions.setPeekTop(false)"
+        @pointercancel="actions.setPeekTop(false)"
+        @pointerleave="actions.setPeekTop(false)"
+      >
+        俯瞰
+      </button>
       <button
         aria-label="拉远视角"
         :disabled="ui.view === 'top' || watching"

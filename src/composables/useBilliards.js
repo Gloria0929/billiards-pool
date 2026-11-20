@@ -50,6 +50,8 @@ export function useBilliards() {
     turn: 0,
     groups: [null, null],
     scores: [0, 0],
+    snookerBreak: 0,
+    snookerBreakSeat: null,
     snookerRemaining: 0,
     snookerMaximum: null,
     snookerCentury: null,
@@ -213,13 +215,21 @@ export function useBilliards() {
     ui.phase = snap.phase
     ui.turn = snap.turn
     ui.groups = snap.groups
+    const prevBreak = ui.snookerBreak
     ui.scores = snap.scores
+    ui.snookerBreak = snap.breakScore ?? 0
+    ui.snookerBreakSeat = snap.breakSeat ?? null
     if (!snap.centuryBreak && !snap.maximumBreak) ui.snookerCelebration = null
     if (celebrateBreak) {
-      if (snap.maximumBreak && !ui.snookerMaximum)
+      if (snap.maximumBreak && !ui.snookerMaximum) {
         ui.snookerCelebration = { ...snap.maximumBreak, full: true }
-      else if (snap.centuryBreak && !ui.snookerCentury)
+        audio.playApplause(1)
+      } else if (snap.centuryBreak && !ui.snookerCentury) {
         ui.snookerCelebration = { ...snap.centuryBreak, full: false }
+        audio.playApplause(0.9)
+      } else if (snap.mode === 'snk' && prevBreak < 50 && ui.snookerBreak >= 50) {
+        audio.playApplause(0.55)
+      }
     }
     ui.snookerMaximum = snap.maximumBreak
     ui.snookerCentury = snap.centuryBreak
@@ -277,6 +287,7 @@ export function useBilliards() {
   }
 
   function openOverlayForResult() {
+    audio.playApplause(0.75)
     if (ui.online.status === 'playing') {
       showMenu('online-over', state.message || '本局结束', '')
       return
@@ -1248,6 +1259,10 @@ export function useBilliards() {
     engine?.setView(view)
   }
 
+  function setPeekTop(active) {
+    engine?.setPeekTop(active)
+  }
+
   function zoom(delta) {
     engine?.zoomView(delta)
   }
@@ -1311,6 +1326,7 @@ export function useBilliards() {
       exitToHome,
       leaveRoom,
       setView,
+      setPeekTop,
       zoom,
       resetView,
       nudge,

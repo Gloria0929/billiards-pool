@@ -47,10 +47,34 @@ const compactMenu = computed(() =>
   ["break-choice", "foul-choice", "free-ball"].includes(props.ui.menu.kind),
 );
 const modes = [
-  { id: "pool", name: "中式八球", description: "清完本组球，再打黑八。", balls: 16 },
-  { id: "snk", name: "斯诺克", description: "红球和彩球交替得分。", balls: 22 },
-  { id: "nine", name: "九球", description: "按号码顺序击球，打进九号获胜。", balls: 9 },
+  {
+    id: "pool",
+    name: "中式八球",
+    en: "CHINESE 8-BALL",
+    table: "9FT 标准球台",
+    description: "清完本组球，再打黑八。",
+    balls: 16,
+  },
+  {
+    id: "snk",
+    name: "斯诺克",
+    en: "WORLD SNOOKER",
+    table: "12FT 锦标赛球台",
+    description: "红球和彩球交替得分。",
+    balls: 22,
+  },
+  {
+    id: "nine",
+    name: "九球",
+    en: "PRO 9-BALL",
+    table: "9FT 美式球台",
+    description: "按号码顺序击球，打进九号获胜。",
+    balls: 9,
+  },
 ];
+const activeModeMeta = computed(
+  () => modes.find((m) => m.id === (outcome.value ? props.ui.mode : props.ui.selectedMode)) || modes[0],
+);
 const tabs = [
   { id: "local", label: "人机对战" },
   { id: "lobby", label: "游戏大厅" },
@@ -123,7 +147,23 @@ function openOnlineFromLobby() {
     <div v-if="frontRoom" class="front-photo">
       <div class="front-brand">
         <span aria-hidden="true">8</span>
-        真实台球
+        <div>
+          <b>真实台球</b>
+          <small>CHAMPIONSHIP EDITION</small>
+        </div>
+      </div>
+
+      <div class="front-showcase">
+        <span class="front-showcase-kicker">
+          {{ outcome ? 'MATCH RESULT' : activeModeMeta.en }}
+        </span>
+        <strong class="front-showcase-title">
+          {{ outcome ? ui.modeName : activeModeMeta.name }}
+        </strong>
+        <div class="front-showcase-meta">
+          <span>{{ activeModeMeta.table }}</span>
+          <span>{{ activeModeMeta.balls }} 颗球</span>
+        </div>
       </div>
     </div>
 
